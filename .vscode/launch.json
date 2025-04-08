@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+		{
+			"name": "(lldb) Launch",
+			"type": "cppdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/build/avp",
+			"args": ["${workspaceFolder}/videos/vid.mp4"],
+			"stopAtEntry": false,
+			"cwd": "${fileDirname}",
+			"environment": [],
+			"externalConsole": false,
+			"MIMode": "lldb"
+		},
+        {
+            "name": "Debug AVP",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/avp",
+            "args": ["${workspaceFolder}/vid.mp4"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build",
+            "miDebuggerPath": "/usr/bin/lldb",
+            "logging": {
+                "engineLogging": true
+            }
+        }
+    ]
+}

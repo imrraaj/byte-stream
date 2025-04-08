@@ -1,0 +1,30 @@
+{
+	"files.associations": {
+		"*.embeddedhtml": "html",
+		"__bit_reference": "c",
+		"algorithm": "c",
+		"bitset": "c",
+		"istream": "c",
+		"limits": "c",
+		"locale": "c",
+		"ratio": "c",
+		"streambuf": "c",
+		"string": "c",
+		"string_view": "c",
+		"complex": "c",
+		"math.h": "c",
+		"swscale.h": "c",
+		"avcodec.h": "c",
+		"frame.h": "c",
+		"opt.h": "c",
+		"audio_fifo.h": "c",
+		"swresample.h": "c",
+		"decoder.h": "c",
+		"stdbool.h": "c",
+		"avformat.h": "c",
+		"player.h": "c",
+		"dict.h": "c",
+		"raylib.h": "c",
+		"ios": "c"
+	}
+}

@@ -1,0 +1,37 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "clang",
+            "args": [
+                "-fsanitize=address",
+                "-framework", "CoreVideo",
+                "-framework", "IOKit",
+                "-framework", "Cocoa",
+                "-framework", "GLUT",
+                "-framework", "OpenGL",
+                "-I./include/",
+                "-I/opt/homebrew/Cellar/ffmpeg/7.1_3/include/",
+                "-L./lib/",
+                "-L/opt/homebrew/Cellar/ffmpeg/7.1_3/lib",
+                "-lraylib",
+                "-lm",
+                "-lavformat",
+                "-lavcodec",
+                "-lavutil",
+                "-lswresample",
+                "-lswscale",
+                "-o", "build/avp",
+                "src/*.c"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "Generated task for building the project"
+        }
+    ]
+}
