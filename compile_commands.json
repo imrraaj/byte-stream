@@ -1,6 +1,6 @@
 [
   { "directory": "/home/rajkp/Personal/sandbox/byte-stream",
-    "arguments": [ "clang -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -I./include/ -I/opt/homebrew/Cellar/ffmpeg/7.1_3/include -L./lib/ -lraylib -lm -L/opt/homebrew/Cellar/ffmpeg/7.1_3/lib -lavformat -lavcodec -lswresample -lswscale -lavutil -o build/avp src/*.c/usr/bin/clang"],
+    "arguments": [ "clang -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -I./include/ -I/opt/homebrew/Cellar/ffmpeg/7.1_3/include -L./lib/ -lraylib -lm -L/opt/homebrew/Cellar/ffmpeg/7.1_3/lib -lavformat -lavcodec -lswresample -lswscale -lavutil -o build/avp src/*.c"],
     "file": "file.cc" 
-  },
+  }
 ]
