@@ -4,7 +4,7 @@ UNAME_S := $(shell uname -s)
 INCLUDES = -I./include/ $(shell pkg-config --cflags libavformat libavcodec libavutil libswresample libswscale)
 LDFLAGS  = $(shell pkg-config --libs libavformat libavcodec libavutil libswresample libswscale) -lm
 ifeq ($(UNAME_S),Darwin)
-    CFLAGS = -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -L./lib/macos -l:libraylib.a
+    CFLAGS = -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -L./lib/macos -lraylib
 else
     CFLAGS = -ggdb -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a
 endif
