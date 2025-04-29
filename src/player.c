@@ -225,7 +225,6 @@ void player_update(void)
     sprintf(total_text, "%02d:%02d", (int)(total_runtime / 60),
             (int)(total_runtime) % 60);
 
-    Vector2 elapsedTimeSize = MeasureTextEx(google, elapsed_text, FONT_SIZE / 2, 0);
     Vector2 totalTimeSize = MeasureTextEx(google, total_text, FONT_SIZE / 2, 0);
     Vector2 videoTitleSize = MeasureTextEx(google, ps.file_title, 36, 0);
     float availableWidth = setting.width * 0.95f;
@@ -350,7 +349,7 @@ void player_update(void)
     if (IsFileDropped())
     {
         FilePathList droppedFiles = LoadDroppedFiles();
-        for (int i = 0; i < droppedFiles.count; i++)
+        for (size_t i = 0; i < droppedFiles.count; i++)
         {
             if (GetFileExtension(droppedFiles.paths[i]) &&
                 strcmp(GetFileExtension(droppedFiles.paths[i]), ".fs") ==
@@ -383,8 +382,6 @@ void player_update(void)
             BeginShaderMode(shaderArray.shaders[i]); // Stack additional shaders
         }
     }
-
-    Rectangle destRect = {0, 0, screenWidth, screenHeight};
     DrawTexturePro(ps.texture,
                    (Rectangle){0, 0, (float)ds.video_codec_ctx->width,
                                (float)ds.video_codec_ctx->height},
@@ -423,14 +420,10 @@ void player_update(void)
     if(GetTime() - last_volume_change_time < 5.0f) {
         int vol_height = 400;
         int vol_width = 20;
-        Rectangle vol_outer_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height};
         Rectangle vol_inner_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height * ps.volume / 250};
-        // Rectangle vol_rect = {0, 0, vol_width, vol_height};
         DrawRectangleLines(GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height, BLACK);
         DrawRectangleRec(vol_inner_rect, BLACK);
         Vector2 textPos = {GetScreenWidth() - FONT_SIZE * 5, 25};
-        char buf[256];
-        // snprintf(buf, sizeof(buf), "Volume: %d\%", (int)s)
         DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
     }
     EndDrawing();

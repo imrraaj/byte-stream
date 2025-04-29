@@ -1,19 +1,18 @@
 CC = clang
 
 UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)  # macOS
-    CFLAGS = -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL
-else  # Non-macOS (e.g., Linux)
-    CFLAGS = -ggdb -Wall -Wextra -pedantic
-endif
-
 INCLUDES = -I./include/ $(shell pkg-config --cflags libavformat libavcodec libavutil libswresample libswscale)
-LDFLAGS = -L./lib/ -lraylib -lm $(shell pkg-config --libs libavformat libavcodec libavutil libswresample libswscale)
+LDFLAGS  = $(shell pkg-config --libs libavformat libavcodec libavutil libswresample libswscale) -lm
+ifeq ($(UNAME_S),Darwin)
+    CFLAGS = -ggdb -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -L./lib/macos -l:libraylib.a
+else
+    CFLAGS = -ggdb -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a
+endif
 
 # Targets
 avp:
 	mkdir -p build
-	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) -o build/avp src/*.c
+	$(CC) -o build/avp src/*.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) 
 
 test:
 	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) test.c -o test
