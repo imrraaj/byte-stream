@@ -1,6 +1,8 @@
 #include "player.h"
 #include "raylib.h"
 #include "raymath.h"
+#include <math.h>
+#include <stdio.h>
 
 #define FONT_SIZE 36
 #define ICON_SIZE 32 / 1.25
@@ -17,6 +19,7 @@ Texture2D pauseTexture;
 Texture2D ffTexture;
 Texture2D bbTexture;
 double last_hover_time = 0;
+double last_volume_change_time = 0;
 static float lastClickTime = 0.0f;              // Time of the last click
 static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
 
@@ -57,6 +60,24 @@ void audio_callback(void *buffer, unsigned int frames)
     }
 }
 
+int GetDisplayWidth(void)
+{
+    if (IsWindowFullscreen())
+    {
+        return GetMonitorWidth(GetCurrentMonitor());
+    }
+    return GetScreenWidth();
+}
+
+int GetDisplayHeight(void)
+{
+    if (IsWindowFullscreen())
+    {
+        return GetMonitorHeight(GetCurrentMonitor());
+    }
+    return GetScreenHeight();
+}
+
 int player_init(char *filename)
 {
     if (decoder_init(filename) < 0)
@@ -66,13 +87,20 @@ int player_init(char *filename)
         return -1;
     }
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-    ps.file_title = get_file_title(&ds);
-    InitWindow(800, 600, ps.file_title);
+    // SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+    // InitWindow(800, 600, ps.file_title);
     SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
     SetWindowPosition(0, 0);
-    SetTargetFPS(60);
-    SetGesturesEnabled(GESTURE_TAP | GESTURE_DOUBLETAP);
+    ps.file_title = get_file_title(&ds);
+
+    printf("---------------------------------------------\n");
+    printf("File: %s\n", filename);
+    printf("Title: %s\n", ps.file_title);
+    printf("---------------------------------------------\n");
+
+    SetWindowTitle(ps.file_title);
+    // SetTargetFPS(60);
+    // SetGesturesEnabled(GESTURE_TAP | GESTURE_DOUBLETAP);
 
     google = LoadFontEx("assets/CircularSpotifyText-Bold.otf", FONT_SIZE, 0, 0);
     playTexture = LoadTexture("assets/play.png");
@@ -114,24 +142,6 @@ void add_shader(const char *shaderFile)
 
     Shader newShader = LoadShader(0, shaderFile); // Assuming fragment shader only
     shaderArray.shaders[shaderArray.shaderCount++] = newShader;
-}
-
-int GetDisplayWidth(void)
-{
-    if (IsWindowFullscreen())
-    {
-        return GetMonitorWidth(GetCurrentMonitor());
-    }
-    return GetScreenWidth();
-}
-
-int GetDisplayHeight(void)
-{
-    if (IsWindowFullscreen())
-    {
-        return GetMonitorHeight(GetCurrentMonitor());
-    }
-    return GetScreenHeight();
 }
 
 MouseButtonPressedTimes DetectMouseButtonDoublePressed(int button)
@@ -240,6 +250,7 @@ void player_update(void)
             ps.volume += 10;
             TraceLog(LOG_INFO, "Volume: %f", ps.volume);
             SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+            last_volume_change_time = GetTime();
         }
     }
     if (IsKeyPressed(KEY_DOWN))
@@ -249,6 +260,7 @@ void player_update(void)
             ps.volume -= 10;
             TraceLog(LOG_INFO, "Volume: %f", ps.volume);
             SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+            last_volume_change_time = GetTime();
         }
     }
     if (IsKeyPressed(KEY_P) && !isPlaying)
@@ -280,6 +292,7 @@ void player_update(void)
         avcodec_flush_buffers(ds.video_codec_ctx);
         av_audio_fifo_reset(ds.fifo);
         frame_time = seek_time;
+        last_hover_time = GetTime();
     }
 
     if (IsKeyPressed(KEY_RIGHT))
@@ -299,6 +312,7 @@ void player_update(void)
         avcodec_flush_buffers(ds.video_codec_ctx);
         av_audio_fifo_reset(ds.fifo);
         frame_time = seek_time;
+        last_hover_time = GetTime();
     }
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
@@ -333,22 +347,6 @@ void player_update(void)
             last_hover_time = GetTime();
         }
     }
-
-#ifndef __APPLE__
-    if (IsKeyPressed(KEY_F))
-    {
-        if (!IsWindowFullscreen())
-        {
-            SetWindowMaxSize(GetMonitorWidth(0), GetMonitorHeight(0));
-            ToggleFullscreen();
-        }
-        else
-        {
-            ToggleFullscreen();
-        }
-    }
-#endif
-
     if (IsFileDropped())
     {
         FilePathList droppedFiles = LoadDroppedFiles();
@@ -364,7 +362,8 @@ void player_update(void)
         UnloadDroppedFiles(droppedFiles);
     }
 
-    if(IsKeyPressed(KEY_U)) {
+    if (IsKeyPressed(KEY_U))
+    {
         // undo all shaders
         for (int i = 0; i < shaderArray.shaderCount; i++)
         {
@@ -420,6 +419,19 @@ void player_update(void)
                        (Rectangle){screenWidth / 2 - playTexture.width / 2, screenHeight / 2 - playTexture.height / 2, playTexture.width, playTexture.height},
                        (Vector2){0, 0}, 0.0f,
                        Fade(DARKBLUE, alpha));
+    }
+    if(GetTime() - last_volume_change_time < 5.0f) {
+        int vol_height = 400;
+        int vol_width = 20;
+        Rectangle vol_outer_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height};
+        Rectangle vol_inner_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height * ps.volume / 250};
+        // Rectangle vol_rect = {0, 0, vol_width, vol_height};
+        DrawRectangleLines(GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height, BLACK);
+        DrawRectangleRec(vol_inner_rect, BLACK);
+        Vector2 textPos = {GetScreenWidth() - FONT_SIZE * 5, 25};
+        char buf[256];
+        // snprintf(buf, sizeof(buf), "Volume: %d\%", (int)s)
+        DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
     }
     EndDrawing();
 }

@@ -5,35 +5,52 @@
 
 #include <stdio.h>
 
-int main(int argc, char **argv)
+bool isFileSelected = false;
+int main(int argc, char** argv)
 {
-  char *file_name;
-  if (argc < 2)
-  {
-    char const *lFilterPatterns[] = {"*.mp4"};
-    file_name = tinyfd_openFileDialog("Please select a video file to play", ".", 1, lFilterPatterns, NULL, 1);
-    if (!file_name)
-    {
-      tinyfd_messageBox("Error", "Invalid file selected", "ok", "error", 0);
-      return 1;
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+    InitWindow(800, 600, "Byte Stream Player");
+    SetTargetFPS(60);
+    SetWindowIcon(LoadImage("assets/logo.png"));
+
+    Font google = LoadFontEx("assets/CircularSpotifyText-Bold.otf", 20, 0, 0);
+    if (argc > 1){
+        isFileSelected = true;
+        if (player_init(argv[1]) < 0)
+        {
+            fprintf(stderr, "ERROR: Failed to initialize player with file: %s\n", argv[1]);
+            exit(1);
+        }
     }
-  }
-  else
-  {
-    file_name = argv[1];
-  }
+    while (!WindowShouldClose())
+    {
+        if (isFileSelected)
+        {
+            player_update();
+        }
+        else
+        {
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                char *file_name = tinyfd_openFileDialog("Please select a video file to play", ".", 1, NULL, NULL, 1);
+                if (file_name)
+                {
+                    isFileSelected = true;
+                    if (player_init(file_name) < 0)
+                    {
+                        fprintf(stderr, "ERROR: Failed to initialize player with file: %s\n", file_name);
+                        exit(1);
+                    }
+                }
+            }
+            BeginDrawing();
+            ClearBackground(GetColor(0x181818FF));
+            DrawTextEx(google, "Click to select a video file", (Vector2){10, 10}, 20, 0, WHITE);
+            DrawTextEx(google, "Press ESC to exit", (Vector2){10, 60}, 20, 0, WHITE);
+            EndDrawing();
+        }
+    }
 
-  if (player_init(file_name) < 0)
-  {
-    fprintf(stderr, "ERROR: Could not initialize player\n");
-    return -1;
-  }
-
-  while (!WindowShouldClose())
-  {
-    player_update();
-  }
-
-  player_close();
-  return 0;
+    player_close();
+    return 0;
 }
