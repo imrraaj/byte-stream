@@ -21,6 +21,8 @@ Texture2D ffTexture;
 Texture2D bbTexture;
 double last_hover_time = 0;
 double last_volume_change_time = 0;
+double last_audio_change_time = 0;
+char audio_language[512];
 static float lastClickTime = 0.0f;              // Time of the last click
 static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
 
@@ -161,6 +163,15 @@ MouseButtonPressedTimes DetectMouseButtonDoublePressed(int button)
     return BUTTON_CLICK_NONE;
 }
 
+void to_timestamp(char *dst, int time) {
+    int hours = time / 3600;
+    int minutes = (time % 3600) / 60;
+    int seconds = time % 60;
+    if(hours > 0)
+        sprintf(dst, "%02d:%02d:%02d", hours, minutes, seconds);
+    else
+        sprintf(dst, "%02d:%02d", minutes, seconds);
+}
 void player_update(void)
 {
     int screenWidth = GetDisplayWidth();
@@ -221,10 +232,9 @@ void player_update(void)
                          (float)screenWidth, settingHeight};
     char elapsed_text[16];
     char total_text[16];
-    sprintf(elapsed_text, "%02d:%02d", (int)(frame_time / 60),
-            (int)(frame_time % 60));
-    sprintf(total_text, "%02d:%02d", (int)(total_runtime / 60),
-            (int)(total_runtime) % 60);
+
+    to_timestamp(elapsed_text, frame_time);
+    to_timestamp(total_text, (int)total_runtime);
 
     Vector2 totalTimeSize = MeasureTextEx(google, total_text, FONT_SIZE / 2, 0);
     Vector2 videoTitleSize = MeasureTextEx(google, ps.file_title, 36, 0);
@@ -271,7 +281,8 @@ void player_update(void)
         }
     }
     if(IsKeyPressed(KEY_B)) {
-        decoder_change_audio();
+        decoder_change_audio(audio_language);
+        last_audio_change_time = GetTime();
     }
 
     if (IsKeyPressed(KEY_LEFT))
@@ -421,14 +432,21 @@ void player_update(void)
                        (Vector2){0, 0}, 0.0f,
                        Fade(DARKBLUE, alpha));
     }
-    if(GetTime() - last_volume_change_time < 5.0f) {
+    if(GetTime() - last_volume_change_time < 3.0f) {
         int vol_height = 400;
         int vol_width = 20;
         Rectangle vol_inner_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height * ps.volume / 250};
         DrawRectangleLines(GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height, BLACK);
         DrawRectangleRec(vol_inner_rect, BLACK);
-        Vector2 textPos = {GetScreenWidth() - FONT_SIZE * 5, 25};
+        Vector2 textSize = MeasureTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
+        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
         DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
+    }
+
+    if(GetTime() - last_audio_change_time < 3.0f) {
+        Vector2 textSize = MeasureTextEx(google, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
+        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(google, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, RAYWHITE);
     }
     EndDrawing();
 }

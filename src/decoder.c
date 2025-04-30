@@ -259,7 +259,7 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
     av_packet_unref(ds.packet);
     return 0;
 }
-int decoder_change_audio() {
+int decoder_change_audio(char *language) {
     printf("Changing the audio...\n");
     current_audio_index = (current_audio_index + 1) % num_audio_streams;
     ds.audio_stream_idx = audio_stream_indices[current_audio_index];
@@ -303,5 +303,21 @@ int decoder_change_audio() {
         return -1;
     }
     ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, FIFO_MIN_FRAMES * 2);
+
+    AVDictionaryEntry *tag = NULL;
+    char lang[256];
+    char title[256];
+    while ((tag = av_dict_get(ds.audio_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
+    {
+        if (strcmp(tag->key, "language") == 0)
+        {
+            strcpy(lang, tag->value);
+        }
+        if (strcmp(tag->key, "title") == 0)
+        {
+            strcpy(title, tag->value);
+        }
+    }
+    strcpy(language, strcat(strcat(title, " - "), lang));
     return 0;
 }
