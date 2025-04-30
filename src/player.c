@@ -1,4 +1,5 @@
 #include "player.h"
+#include "decoder.h"
 #include "raylib.h"
 #include "raymath.h"
 #include <math.h>
@@ -268,6 +269,9 @@ void player_update(void)
         {
             TraceLog(LOG_INFO, "Saved frame in  an image");
         }
+    }
+    if(IsKeyPressed(KEY_B)) {
+        decoder_change_audio();
     }
 
     if (IsKeyPressed(KEY_LEFT))

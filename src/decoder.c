@@ -1,6 +1,7 @@
 #include "decoder.h"
 #include "raylib.h"
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
@@ -15,6 +16,9 @@
 DecoderState ds = {0};
 int64_t frame_time = 0;
 float playback_speed = 1.25;
+int audio_stream_indices[10];
+int num_audio_streams = 0;
+int current_audio_index = 0;
 
 int decoder_init(char *filename)
 {
@@ -28,6 +32,12 @@ int decoder_init(char *filename)
     {
         fprintf(stderr, "ERROR: Could not find stream info\n");
         return -1;
+    }
+
+    for (unsigned int i = 0; i < ds.format_ctx->nb_streams; i++) {
+        if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_stream_indices[num_audio_streams++] = i;
+        }
     }
 
     ds.video_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
@@ -226,7 +236,7 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
                 fprintf(stderr, "ERROR: Error sending packet\n");
                 return -1;
             }
-    
+
             while (ret >= 0)
             {
                 ret = avcodec_receive_frame(ds.video_codec_ctx, ds.frame);
@@ -237,7 +247,7 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
                     fprintf(stderr, "ERROR: Error receiving frame\n");
                     return -1;
                 }
-    
+
                 uint8_t *rgba_planes[1] = {ds.rgba_frame_buffer};
                 int rgba_linesizes[1] = {ds.video_codec_ctx->width * 4};
                 sws_scale(ds.sws_ctx, (const uint8_t *const *)ds.frame->data, ds.frame->linesize, 0, ds.video_codec_ctx->height, rgba_planes, rgba_linesizes);
@@ -247,5 +257,51 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
         }
     }
     av_packet_unref(ds.packet);
+    return 0;
+}
+int decoder_change_audio() {
+    printf("Changing the audio...\n");
+    current_audio_index = (current_audio_index + 1) % num_audio_streams;
+    ds.audio_stream_idx = audio_stream_indices[current_audio_index];
+    ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
+    const AVCodec *audio_codec = avcodec_find_decoder(ds.audio_stream->codecpar->codec_id);
+    if (!audio_codec)
+    {
+        fprintf(stderr, "ERROR: Could not find audio codec\n");
+        return -1;
+    }
+    ds.audio_codec_ctx = avcodec_alloc_context3(audio_codec);
+    if (!ds.audio_codec_ctx)
+    {
+        fprintf(stderr, "ERROR: Could not allocate audio codec context\n");
+        return -1;
+    }
+    if (avcodec_parameters_to_context(ds.audio_codec_ctx, ds.audio_stream->codecpar) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not set audio codec parameters\n");
+        return -1;
+    }
+    if (avcodec_open2(ds.audio_codec_ctx, audio_codec, NULL) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not open audio codec\n");
+        return -1;
+    }
+    AVChannelLayout out_ch_layout;
+    av_channel_layout_default(&out_ch_layout, 2);
+
+    int ret = swr_alloc_set_opts2(&ds.swr_ctx, &out_ch_layout, AV_SAMPLE_FMT_FLT, ds.audio_codec_ctx->sample_rate, &ds.audio_codec_ctx->ch_layout, ds.audio_codec_ctx->sample_fmt, ds.audio_codec_ctx->sample_rate, 0, NULL);
+
+    if (ret < 0)
+    {
+        fprintf(stderr, "ERROR: swr_alloc_set_opts2() failed\n");
+        return -1;
+    }
+
+    if (swr_init(ds.swr_ctx) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not initialize SwrContext\n");
+        return -1;
+    }
+    ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, FIFO_MIN_FRAMES * 2);
     return 0;
 }

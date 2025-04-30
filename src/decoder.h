@@ -37,5 +37,5 @@ extern int64_t frame_time;
 int decoder_init(char *filename);
 int decoder_decode_frame(Texture texture, int64_t *frame_time);
 int decoder_fill_audio_queue(Texture texture, int64_t *frame_time);
-
+int decoder_change_audio();
 #endif // DECODER_H
