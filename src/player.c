@@ -2,6 +2,7 @@
 #include "decoder.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "bundle.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -22,7 +23,9 @@ Texture2D bbTexture;
 double last_hover_time = 0;
 double last_volume_change_time = 0;
 double last_audio_change_time = 0;
+double last_subtitle_change_time = 0;
 char audio_language[512];
+char subtitle_language[512];
 static float lastClickTime = 0.0f;              // Time of the last click
 static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
 
@@ -61,6 +64,34 @@ void audio_callback(void *buffer, unsigned int frames)
     {
         memset(buffer, 0, frames * sizeof(float) * 2);
     }
+}
+
+void *bundle_load_resource(const char *file_path, size_t *size)
+{
+    for (size_t i = 0; i < resources_count; ++i)
+    {
+        if (strcmp(resources[i].file_path, file_path) == 0)
+        {
+            *size = resources[i].size;
+            return &bundle[resources[i].offset];
+        }
+    }
+    return NULL;
+}
+Font bundle_load_font(const char *file_path)
+{
+    size_t data_size;
+    void *data = bundle_load_resource(file_path, &data_size);
+    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, FONT_SIZE, NULL, 0);
+    return output;
+}
+Texture bundle_load_texture(const char *file_path)
+{
+    size_t data_size;
+    void *data = bundle_load_resource(file_path, &data_size);
+    Image image = LoadImageFromMemory(GetFileExtension(file_path), data, data_size);
+    Texture output = LoadTextureFromImage(image);
+    return output;
 }
 
 int GetDisplayWidth(void)
@@ -105,11 +136,11 @@ int player_init(char *filename)
     // SetTargetFPS(60);
     // SetGesturesEnabled(GESTURE_TAP | GESTURE_DOUBLETAP);
 
-    google = LoadFontEx("assets/CircularSpotifyText-Bold.otf", FONT_SIZE, 0, 0);
-    playTexture = LoadTexture("assets/play.png");
-    pauseTexture = LoadTexture("assets/pause.png");
-    ffTexture = LoadTexture("assets/ff.png");
-    bbTexture = LoadTexture("assets/bb.png");
+    google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf");
+    playTexture = bundle_load_texture("./assets/icons/play.png");
+    pauseTexture = bundle_load_texture("./assets/icons/pause.png");
+    ffTexture = bundle_load_texture("./assets/icons/ff.png");
+    bbTexture = bundle_load_texture("./assets/icons/bb.png");
 
     InitAudioDevice();
     ps.raylib_audio_stream =
@@ -163,11 +194,12 @@ MouseButtonPressedTimes DetectMouseButtonDoublePressed(int button)
     return BUTTON_CLICK_NONE;
 }
 
-void to_timestamp(char *dst, int time) {
+void to_timestamp(char *dst, int time)
+{
     int hours = time / 3600;
     int minutes = (time % 3600) / 60;
     int seconds = time % 60;
-    if(hours > 0)
+    if (hours > 0)
         sprintf(dst, "%02d:%02d:%02d", hours, minutes, seconds);
     else
         sprintf(dst, "%02d:%02d", minutes, seconds);
@@ -280,9 +312,15 @@ void player_update(void)
             TraceLog(LOG_INFO, "Saved frame in  an image");
         }
     }
-    if(IsKeyPressed(KEY_B)) {
+    if (IsKeyPressed(KEY_B))
+    {
         decoder_change_audio(audio_language);
         last_audio_change_time = GetTime();
+    }
+    if (IsKeyPressed(KEY_V))
+    {
+        decoder_change_subtitle(subtitle_language);
+        last_subtitle_change_time = GetTime();
     }
 
     if (IsKeyPressed(KEY_LEFT))
@@ -432,7 +470,8 @@ void player_update(void)
                        (Vector2){0, 0}, 0.0f,
                        Fade(DARKBLUE, alpha));
     }
-    if(GetTime() - last_volume_change_time < 3.0f) {
+    if (GetTime() - last_volume_change_time < 3.0f)
+    {
         int vol_height = 400;
         int vol_width = 20;
         Rectangle vol_inner_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height * ps.volume / 250};
@@ -443,10 +482,17 @@ void player_update(void)
         DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
     }
 
-    if(GetTime() - last_audio_change_time < 3.0f) {
+    if (GetTime() - last_audio_change_time < 3.0f)
+    {
         Vector2 textSize = MeasureTextEx(google, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
         DrawTextEx(google, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, RAYWHITE);
+    }
+    if (GetTime() - last_subtitle_change_time < 3.0f)
+    {
+        Vector2 textSize = MeasureTextEx(google, TextFormat("Subtitle: %s", subtitle_language), FONT_SIZE, 0);
+        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(google, TextFormat("Subtitle: %s", subtitle_language), textPos, FONT_SIZE, 0, RAYWHITE);
     }
     EndDrawing();
 }

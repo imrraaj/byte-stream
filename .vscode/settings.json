@@ -25,6 +25,11 @@
 		"player.h": "c",
 		"dict.h": "c",
 		"raylib.h": "c",
-		"ios": "c"
+		"ios": "c",
+		"format": "c",
+		"bundle.h": "c",
+		"array": "c",
+		"ranges": "c",
+		"span": "c"
 	}
 }

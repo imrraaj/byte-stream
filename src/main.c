@@ -11,9 +11,9 @@ int main(int argc, char** argv)
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(800, 600, "Byte Stream Player");
     SetTargetFPS(60);
-    SetWindowIcon(LoadImage("assets/logo.png"));
+    SetWindowIcon(LoadImage("assets/logos/logo.png"));
 
-    Font google = LoadFontEx("assets/CircularSpotifyText-Bold.otf", 20, 0, 0);
+    Font google = LoadFontEx("assets/fonts/CircularSpotifyText-Bold.otf", 20, 0, 0);
     if (argc > 1){
         isFileSelected = true;
         if (player_init(argv[1]) < 0)

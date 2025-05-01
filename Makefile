@@ -9,10 +9,14 @@ else
     CFLAGS = -ggdb -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a
 endif
 
-# Targets
-avp:
+
+avp: nob
+	./nob
 	mkdir -p build
 	$(CC) -o build/avp src/*.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) 
+
+nob: 
+	cc nob.c -o ./nob
 
 test:
 	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) test.c -o test
