@@ -1,5 +1,6 @@
 #include "decoder.h"
 #include "raylib.h"
+#include "subtitle.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,9 @@ float playback_speed = 1.25;
 int audio_stream_indices[10];
 int num_audio_streams = 0;
 int current_audio_index = 0;
+int subtitle_stream_indices[10];
+int num_subtitle_streams = 0;
+
 
 int decoder_init(char *filename)
 {
@@ -34,20 +38,26 @@ int decoder_init(char *filename)
         return -1;
     }
 
-    for (unsigned int i = 0; i < ds.format_ctx->nb_streams; i++) {
-        if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+    for (unsigned int i = 0; i < ds.format_ctx->nb_streams; i++)
+    {
+        if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
             audio_stream_indices[num_audio_streams++] = i;
+        }
+        else if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
+        {
+            subtitle_stream_indices[num_subtitle_streams++] = i;
         }
     }
 
     ds.video_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     ds.audio_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
-    if (ds.video_stream_idx == -1)
+    if (ds.video_stream_idx < 0)
     {
         fprintf(stderr, "ERROR: Could not find video stream\n");
         return -1;
     }
-    if (ds.audio_stream_idx == -1)
+    if (ds.audio_stream_idx < 0)
     {
         fprintf(stderr, "ERROR: Could not find audio stream\n");
         return -1;
@@ -57,7 +67,6 @@ int decoder_init(char *filename)
     ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
     const AVCodec *video_codec = avcodec_find_decoder(ds.video_stream->codecpar->codec_id);
     const AVCodec *audio_codec = avcodec_find_decoder(ds.audio_stream->codecpar->codec_id);
-
     if (!video_codec)
     {
         fprintf(stderr, "ERROR: Could not find video codec\n");
@@ -141,6 +150,7 @@ int decoder_init(char *filename)
     ds.rgba_frame_buffer = malloc(ds.video_codec_ctx->width * ds.video_codec_ctx->height * 4);
     memset(ds.rgba_frame_buffer, 0, ds.video_codec_ctx->width * ds.video_codec_ctx->height * 4);
     ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, FIFO_MIN_FRAMES * 2);
+    ds.selected_subtitle_stream_idx = -1;
     return 0;
 }
 
@@ -196,6 +206,29 @@ int decoder_decode_frame(Texture texture, int64_t *frame_time)
             sws_scale(ds.sws_ctx, (const uint8_t *const *)ds.frame->data, ds.frame->linesize, 0, ds.video_codec_ctx->height, rgba_planes, rgba_linesizes);
             UpdateTexture(texture, ds.rgba_frame_buffer);
             *frame_time = (int)ds.frame->pts * av_q2d(ds.video_stream->time_base);
+        }
+    }
+    if (ds.packet->stream_index == ds.subtitle_stream_idx)
+    {
+        AVSubtitle sub;
+        int got_frame = 0;
+        if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
+        {
+            for (size_t i = 0; i < sub.num_rects; i++)
+            {
+                if (sub.rects[i]->type == SUBTITLE_TEXT)
+                {
+                    printf("Subtitle (Text): %s\n", sub.rects[i]->text);
+                    ds.current_subtitle = sub.rects[i]->text;
+                }
+                else if (sub.rects[i]->type == SUBTITLE_ASS)
+                {
+                    ds.current_subtitle = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
+                    printf("Subtitle (ASS): %s\n", sub.rects[i]->ass);
+                }
+                printf("Start Time: %u ms, End Time: %u ms\n", sub.start_display_time, sub.end_display_time);
+            }
+            avsubtitle_free(&sub);
         }
     }
     return 0;
@@ -255,11 +288,35 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
                 *frame_time = (int)ds.frame->pts * av_q2d(ds.video_stream->time_base);
             }
         }
+        if (ds.packet->stream_index == ds.subtitle_stream_idx)
+        {
+            AVSubtitle sub;
+            int got_frame = 0;
+            if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
+            {
+                for (size_t i = 0; i < sub.num_rects; i++)
+                {
+                    if (sub.rects[i]->type == SUBTITLE_TEXT)
+                    {
+                        printf("Subtitle (Text): %s\n", sub.rects[i]->text);
+                    }
+                    else if (sub.rects[i]->type == SUBTITLE_ASS)
+                    {
+                        ds.current_subtitle = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
+                        printf("Subtitle (ASS): %s\n", ds.current_subtitle);
+                    }
+                    printf("Start Time: %u ms, End Time: %u ms\n", sub.start_display_time, sub.end_display_time);
+                }
+                avsubtitle_free(&sub);
+            }
+        }
     }
     av_packet_unref(ds.packet);
     return 0;
 }
-int decoder_change_audio(char *language) {
+
+int decoder_change_audio(char *language)
+{
     printf("Changing the audio...\n");
     current_audio_index = (current_audio_index + 1) % num_audio_streams;
     ds.audio_stream_idx = audio_stream_indices[current_audio_index];
@@ -320,4 +377,60 @@ int decoder_change_audio(char *language) {
     }
     strcpy(language, strcat(strcat(title, " - "), lang));
     return 0;
+}
+
+int decoder_change_subtitle(char *language)
+{
+    if(num_subtitle_streams == 0)
+    {
+        strcpy(language, "No subtitle available");
+        return -1;
+    }
+    printf("Changing the subtitle...\n");
+    ds.selected_subtitle_stream_idx = (ds.selected_subtitle_stream_idx + 1) % num_subtitle_streams;
+    ds.subtitle_stream_idx = subtitle_stream_indices[ds.selected_subtitle_stream_idx];
+    ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
+    const AVCodec *subtitle_codec = avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id);
+    if (!subtitle_codec)
+    {
+        fprintf(stderr, "ERROR: Could not find subtitle codec\n");
+        goto defer;
+    }
+    ds.subtitle_codec_ctx = avcodec_alloc_context3(subtitle_codec);
+    if (!ds.subtitle_codec_ctx)
+    {
+        fprintf(stderr, "ERROR: Could not allocate subtitle codec context\n");
+        goto defer;
+    }
+    if (avcodec_parameters_to_context(ds.subtitle_codec_ctx, ds.subtitle_stream->codecpar) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not set subtitle codec parameters\n");
+        goto defer;
+    }
+    if (avcodec_open2(ds.subtitle_codec_ctx, subtitle_codec, NULL) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not open subtitle codec\n");
+        goto defer;
+    }
+
+    AVDictionaryEntry *tag = NULL;
+    char lang[256];
+    char title[256];
+    while ((tag = av_dict_get(ds.subtitle_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
+    {
+        if (strcmp(tag->key, "language") == 0)
+        {
+            strcpy(lang, tag->value);
+        }
+        if (strcmp(tag->key, "title") == 0)
+        {
+            strcpy(title, tag->value);
+        }
+        printf("%s:%s\n", tag->key, tag->value);
+    }
+    strcpy(language, strcat(strcat(title, " - "), lang));
+    return 0;
+    defer:
+        strcpy(language, "ERROR: this subtitle is not supported");
+    return -1;
 }

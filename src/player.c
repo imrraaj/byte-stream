@@ -20,10 +20,10 @@ Texture2D playTexture;
 Texture2D pauseTexture;
 Texture2D ffTexture;
 Texture2D bbTexture;
-double last_hover_time = 0;
-double last_volume_change_time = 0;
-double last_audio_change_time = 0;
-double last_subtitle_change_time = 0;
+double last_hover_time = -5.0f;
+double last_volume_change_time = -5.0f;
+double last_audio_change_time = -5.0f;
+double last_subtitle_change_time = -5.0f;
 char audio_language[512];
 char subtitle_language[512];
 static float lastClickTime = 0.0f;              // Time of the last click
@@ -494,6 +494,11 @@ void player_update(void)
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
         DrawTextEx(google, TextFormat("Subtitle: %s", subtitle_language), textPos, FONT_SIZE, 0, RAYWHITE);
     }
+
+    Vector2 a = MeasureTextEx(google, ds.current_subtitle, FONT_SIZE * 1.25, 0);
+    DrawTextEx(google, ds.current_subtitle,
+               (Vector2){screenWidth / 2 - a.x / 2, screenHeight - settingHeight + settingHeight * 0.15f},
+               FONT_SIZE * 1.25, 0, WHITE);
     EndDrawing();
 }
 

@@ -7,13 +7,13 @@ typedef struct { // nob.c:58
 } Resource; // nob.c:62
 size_t resources_count = 7; // nob.c:63
 Resource resources[] = { // nob.c:64
-    {.file_path = "./assets/icons/bb.png", .offset = 0, .size = 668}, // nob.c:66
-    {.file_path = "./assets/icons/ff.png", .offset = 669, .size = 690}, // nob.c:66
-    {.file_path = "./assets/icons/pause.png", .offset = 1360, .size = 515}, // nob.c:66
-    {.file_path = "./assets/icons/play.png", .offset = 1876, .size = 658}, // nob.c:66
-    {.file_path = "./assets/icons/stop.png", .offset = 2535, .size = 268}, // nob.c:66
-    {.file_path = "./assets/fonts/CircularSpotifyText-Black.otf", .offset = 2804, .size = 75848}, // nob.c:66
-    {.file_path = "./assets/fonts/CircularSpotifyText-Bold.otf", .offset = 78653, .size = 76032}, // nob.c:66
+    {.file_path = "./assets/icons/bb.png", .offset = 0, .size = 668}, // nob.c:67
+    {.file_path = "./assets/icons/ff.png", .offset = 669, .size = 690}, // nob.c:67
+    {.file_path = "./assets/icons/pause.png", .offset = 1360, .size = 515}, // nob.c:67
+    {.file_path = "./assets/icons/play.png", .offset = 1876, .size = 658}, // nob.c:67
+    {.file_path = "./assets/icons/stop.png", .offset = 2535, .size = 268}, // nob.c:67
+    {.file_path = "./assets/fonts/CircularSpotifyText-Black.otf", .offset = 2804, .size = 75848}, // nob.c:67
+    {.file_path = "./assets/fonts/CircularSpotifyText-Bold.otf", .offset = 78653, .size = 76032}, // nob.c:67
 }; // nob.c:69
 unsigned char bundle[] = { // nob.c:71
      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x40,  // nob.c:78

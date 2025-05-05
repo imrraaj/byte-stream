@@ -10,16 +10,21 @@
 #include <libswresample/swresample.h>
 
 #include "raylib.h"
+#include "subtitle.h"
 
 struct DecoderState
 {
     AVFormatContext *format_ctx;
     AVCodecContext *video_codec_ctx;
     AVCodecContext *audio_codec_ctx;
+    AVCodecContext *subtitle_codec_ctx;
     int audio_stream_idx;
     int video_stream_idx;
+    int subtitle_stream_idx;
+    int selected_subtitle_stream_idx;
     AVStream *video_stream;
     AVStream *audio_stream;
+    AVStream *subtitle_stream;
     AVFrame *frame;
     AVPacket *packet;
     SwrContext *swr_ctx;
@@ -28,6 +33,7 @@ struct DecoderState
     AVDictionaryEntry *tag;
 
     uint8_t *rgba_frame_buffer;
+    char *current_subtitle;
 };
 
 typedef struct DecoderState DecoderState;
@@ -38,4 +44,5 @@ int decoder_init(char *filename);
 int decoder_decode_frame(Texture texture, int64_t *frame_time);
 int decoder_fill_audio_queue(Texture texture, int64_t *frame_time);
 int decoder_change_audio(char *language);
+int decoder_change_subtitle(char *language);
 #endif // DECODER_H
