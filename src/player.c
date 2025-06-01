@@ -157,7 +157,8 @@ int player_init(char *filename)
     PlayAudioStream(ps.raylib_audio_stream);
     ps.volume = 100;
     SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
-
+    SetTargetFPS(ds.video_codec_ctx->framerate.num /
+                 ds.video_codec_ctx->framerate.den);
     shaderArray.capacity = 4; // Initial capacity
     shaderArray.shaders = malloc(shaderArray.capacity * sizeof(Shader));
     shaderArray.shaderCount = 0;
