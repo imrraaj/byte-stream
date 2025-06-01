@@ -30,6 +30,8 @@
 		"bundle.h": "c",
 		"array": "c",
 		"ranges": "c",
-		"span": "c"
+		"span": "c",
+		"*.inc": "c",
+		"nob.h": "c"
 	}
 }

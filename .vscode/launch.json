@@ -5,7 +5,7 @@
 			"name": "(lldb) Launch",
 			"type": "cppdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/build/avp",
+			"program": "${workspaceFolder}/build/bytestream",
 			"args": ["${workspaceFolder}/videos/vid.mp4"],
 			"stopAtEntry": false,
 			"cwd": "${fileDirname}",
@@ -14,10 +14,10 @@
 			"MIMode": "lldb"
 		},
         {
-            "name": "Debug AVP",
+            "name": "Debug bytestream",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/avp",
+            "program": "${workspaceFolder}/build/bytestream",
             "args": ["${workspaceFolder}/vid.mp4"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

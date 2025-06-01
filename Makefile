@@ -10,13 +10,13 @@ else
 endif
 
 
-avp: nob
-	./nob
+bytestream: generator
+	./generator
 	mkdir -p build
-	$(CC) -o build/avp src/*.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) 
+	$(CC) -o build/bytestream src/*.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) 
 
-nob: 
-	cc nob.c -o ./nob
+generator: 
+	cc generator.c -o ./generator
 
 test:
 	$(CC) $(CFLAGS) $(INCLUDES) $(LDFLAGS) test.c -o test
