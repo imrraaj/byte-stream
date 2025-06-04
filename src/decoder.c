@@ -24,9 +24,10 @@ int num_audio_streams = 0;
 int current_audio_index = 0;
 int subtitle_stream_indices[10];
 int num_subtitle_streams = 0;
+static double playback_start_time = 0.0;
+static double first_frame_pts = 0.0;
 
-
-int decoder_decode_frame(Texture texture, int64_t *frame_time)
+int decoder_decode_frame(void)
 {
     int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
     if (read_bytes < 0)
@@ -34,6 +35,7 @@ int decoder_decode_frame(Texture texture, int64_t *frame_time)
 
     if (ds.packet->stream_index == ds.audio_stream_idx)
     {
+        AVFrame *original_audio_frame = av_frame_alloc();
         if (avcodec_send_packet(ds.audio_codec_ctx, ds.packet) == 0)
         {
             AVFrame *resampled_frame = av_frame_alloc();
@@ -43,53 +45,82 @@ int decoder_decode_frame(Texture texture, int64_t *frame_time)
             av_channel_layout_copy(&resampled_frame->ch_layout, &out_ch_layout);
             resampled_frame->format = AV_SAMPLE_FMT_S16;
             av_frame_get_buffer(resampled_frame, 0);
-            while (avcodec_receive_frame(ds.audio_codec_ctx, ds.frame) == 0)
+            while (avcodec_receive_frame(ds.audio_codec_ctx, original_audio_frame) == 0)
             {
-                swr_convert_frame(ds.swr_ctx, resampled_frame, ds.frame);
+                swr_convert_frame(ds.swr_ctx, resampled_frame, original_audio_frame);
             }
             av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
             av_frame_free(&resampled_frame);
         }
     }
-
-   return 0;
+    if (ds.packet->stream_index == ds.video_stream_idx)
+    {
+        AVPacket *video_pkt = av_packet_clone(ds.packet);
+        pthread_mutex_lock(&ds.queue_mutex);
+        queue_push(ds.video_queue, video_pkt);
+        pthread_mutex_unlock(&ds.queue_mutex);
+    }
+    return 0;
 }
 
 void *decode_thread_func(void *arg)
 {
-    DecoderState *ds = (DecoderState *)arg;
-    // Print all audio information
-    // printf(
-    
-    while (ds->decoding)
+    (void)arg;
+    while (ds.decoding)
     {
-        decoder_decode_frame(ps.texture, &frame_time);
-        // decoder_fill_audio_queue(ps.texture, &frame_time);
+        decoder_decode_frame();
     }
-    // DecoderState *ds = (DecoderState *)arg; // Suppress unused parameter warning
-    // while (ds->decoding)
-    // {
+    return NULL;
+}
+void *video_thread_func(void *arg)
+{
+    (void)arg;
+    AVFrame *video_frame = av_frame_alloc();
+    if (!video_frame)
+    {
+        fprintf(stderr, "ERROR: Could not allocate video frame\n");
+        return NULL;
+    }
+    while (ds.decoding)
+    {
+        pthread_mutex_lock(&ds.queue_mutex);
+        AVPacket *pkt = queue_pop(ds.video_queue);
+        pthread_mutex_unlock(&ds.queue_mutex);
 
-    //     int read_bytes = av_read_frame(ds->format_ctx, ds->packet);
-    //     if (read_bytes < 0)
-    //         return NULL;
-    //     if (ds->packet->stream_index == ds->video_stream_idx)
-    //     {
-    //         pthread_mutex_lock(&ds->queue_mutex);
-    //         queue_push(ds->video_queue, ds->packet);
-    //         pthread_mutex_unlock(&ds->queue_mutex);
-    //     }
-    //     else
-    //     {
-    //         av_packet_free(&ds->packet);
-    //     }
-    // }
-    // return NULL;
-    // DecoderState *ds = (DecoderState *)arg;
-    // while (ds->decoding)
-    // {
-    //
-    // }
+        if (!pkt)
+        {
+            WaitTime(0.1);
+            continue;
+        }
+
+        if (avcodec_send_packet(ds.video_codec_ctx, pkt) == 0)
+        {
+            av_frame_get_buffer(video_frame, 0);
+            while (avcodec_receive_frame(ds.video_codec_ctx, video_frame) == 0)
+            {
+                double pts_seconds = video_frame->pts * av_q2d(ds.video_stream->time_base);
+
+                if (playback_start_time == 0.0)
+                {
+                    playback_start_time = GetTime();
+                    first_frame_pts = pts_seconds;
+                }
+
+                double current_time = GetTime() - playback_start_time;
+                double delay = (pts_seconds - first_frame_pts) - current_time;
+
+                if (delay > 0)
+                    WaitTime(delay);
+                pthread_mutex_lock(&ds.texture_mutex);
+                uint8_t *rgba_planes[] = {ds.rgba_frame_buffer};
+                int rgba_linesizes[] = {ds.video_codec_ctx->width * 4};
+                sws_scale(ds.sws_ctx, (const uint8_t *const *)video_frame->data, video_frame->linesize, 0, ds.video_codec_ctx->height, rgba_planes, rgba_linesizes);
+                pthread_mutex_unlock(&ds.texture_mutex);
+            }
+        }
+        av_packet_free(&pkt);
+    }
+    av_frame_free(&video_frame);
     return NULL;
 }
 
@@ -182,7 +213,7 @@ int decoder_init(char *filename)
         return -1;
     }
 
-    ds.frame = av_frame_alloc();
+    // ds.frame = av_frame_alloc();
     ds.packet = av_packet_alloc();
 
     ds.sws_ctx = sws_getContext(ds.video_codec_ctx->width, ds.video_codec_ctx->height, ds.video_codec_ctx->pix_fmt, ds.video_codec_ctx->width, ds.video_codec_ctx->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
@@ -236,57 +267,26 @@ int decoder_init(char *filename)
     }
 
     pthread_mutex_init(&ds.queue_mutex, NULL);
+    pthread_mutex_init(&ds.texture_mutex, NULL);
     ds.decoding = true;
-    pthread_create(&ds.decode_thread, NULL, decode_thread_func, &ds);
-
+    pthread_create(&ds.decode_thread, NULL, decode_thread_func, NULL);
+    pthread_create(&ds.video_thread, NULL, video_thread_func, NULL);
     return 0;
 }
-int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
-{
-    pthread_mutex_lock(&ds.queue_mutex);
-    while (av_audio_fifo_size(ds.fifo) <= FIFO_MIN_FRAMES)
-    {
-        if (av_read_frame(ds.format_ctx, ds.packet) == 0 && ds.packet->stream_index == ds.audio_stream_idx)
-        {
-            if (avcodec_send_packet(ds.audio_codec_ctx, ds.packet) != 0)
-            {
-                fprintf(stderr, "ERROR: Error sending packet\n");
-                return -1;
-            }
-            while (avcodec_receive_frame(ds.audio_codec_ctx, ds.frame) == 0)
-            {
-                AVFrame *resampled_frame = av_frame_alloc();
-                resampled_frame->sample_rate = ds.audio_codec_ctx->sample_rate;
-                AVChannelLayout out_ch_layout;
-                av_channel_layout_default(&out_ch_layout, 2);
-                av_channel_layout_copy(&resampled_frame->ch_layout, &out_ch_layout);
-                
-                resampled_frame->format = AV_SAMPLE_FMT_S16;
-                resampled_frame->nb_samples = ds.frame->nb_samples;
-                
-                swr_convert_frame(ds.swr_ctx, resampled_frame, ds.frame);
-                av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
-                av_frame_free(&resampled_frame);
 
-                printf("Audio decoding...\n");
-            }
-        }   
-    }
-    pthread_mutex_unlock(&ds.queue_mutex);
-    return 0;
-}
 void decoder_stop(void)
 {
     ds.decoding = false;
     printf("waiting for thread to finish...\n");
     pthread_join(ds.decode_thread, NULL);
-    // pthread_join(ds.video_thread, NULL);
+    pthread_join(ds.video_thread, NULL);
     pthread_mutex_destroy(&ds.queue_mutex);
+    pthread_mutex_destroy(&ds.texture_mutex);
 
     queue_free(ds.video_queue);
     queue_free(ds.audio_queue);
 
-    av_frame_free(&ds.frame);
+    // av_frame_free(&ds.frame);
     av_packet_free(&ds.packet);
     avcodec_free_context(&ds.video_codec_ctx);
     avcodec_free_context(&ds.audio_codec_ctx);

@@ -135,7 +135,7 @@ int player_init(char *filename)
     printf("---------------------------------------------\n");
 
     SetWindowTitle(ps.file_title);
-    // SetTargetFPS(60);
+    // SetTargetFPS(3);
     // SetGesturesEnabled(GESTURE_TAP | GESTURE_DOUBLETAP);
 
     google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf");
@@ -148,27 +148,22 @@ int player_init(char *filename)
     int sample_rate = ds.audio_codec_ctx->sample_rate;
     int sample_size = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16) * 8;
     int channels = 2;
-    printf("%d  %d %d\n", sample_rate, sample_size, channels);
     ps.raylib_audio_stream = LoadAudioStream(sample_rate, sample_size, channels);
     SetAudioStreamCallback(ps.raylib_audio_stream, audio_callback);
-
-    Image frame_image = {.data = ds.rgba_frame_buffer,
-                         .width = ds.video_codec_ctx->width,
-                         .height = ds.video_codec_ctx->height,
-                         .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
-                         .mipmaps = 1};
-    ps.texture = LoadTextureFromImage(frame_image);
     PlayAudioStream(ps.raylib_audio_stream);
     ps.volume = 100;
     SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
-    // SetTargetFPS(ds.video_codec_ctx->framerate.num / ds.video_codec_ctx->framerate.den);
-    shaderArray.capacity = 4; // Initial capacity
+
+    pthread_mutex_lock(&ds.texture_mutex);
+    ps.texture = LoadTextureFromImage(GenImageColor(ds.video_codec_ctx->width, ds.video_codec_ctx->height, BLACK));
+    pthread_mutex_unlock(&ds.texture_mutex);
+
+    shaderArray.capacity = 4;
     shaderArray.shaders = malloc(shaderArray.capacity * sizeof(Shader));
     shaderArray.shaderCount = 0;
     return 0;
 }
 
-// Function to add a shader from dropped file
 void add_shader(const char *shaderFile)
 {
     if (shaderArray.shaderCount >= shaderArray.capacity)
@@ -177,8 +172,7 @@ void add_shader(const char *shaderFile)
         shaderArray.shaders =
             realloc(shaderArray.shaders, shaderArray.capacity * sizeof(Shader));
     }
-
-    Shader newShader = LoadShader(0, shaderFile); // Assuming fragment shader only
+    Shader newShader = LoadShader(0, shaderFile);
     shaderArray.shaders[shaderArray.shaderCount++] = newShader;
 }
 
@@ -259,10 +253,7 @@ void player_update(void)
     }
     if (isPlaying)
     {
-        // decoder_decode_frame(ps.texture, &frame_time);
-        isPlaying ? PlayAudioStream(ps.raylib_audio_stream)
-                  : PauseAudioStream(ps.raylib_audio_stream);
-        // decoder_fill_audio_queue(ps.texture, &frame_time);
+        isPlaying ? ResumeAudioStream(ps.raylib_audio_stream) : PauseAudioStream(ps.raylib_audio_stream);
     }
     Rectangle setting = {0, (float)screenHeight - settingHeight,
                          (float)screenWidth, settingHeight};
@@ -420,7 +411,6 @@ void player_update(void)
 
     if (IsKeyPressed(KEY_U))
     {
-        // undo all shaders
         for (int i = 0; i < shaderArray.shaderCount; i++)
         {
             UnloadShader(shaderArray.shaders[i]);
@@ -430,7 +420,6 @@ void player_update(void)
 
     BeginDrawing();
     ClearBackground(BLACK);
-
     if (shaderArray.shaderCount > 0)
     {
         BeginShaderMode(shaderArray.shaders[0]); // Start with first shader
@@ -440,23 +429,23 @@ void player_update(void)
         }
     }
     pthread_mutex_lock(&ds.texture_mutex);
+    UpdateTexture(ps.texture, ds.rgba_frame_buffer);
     DrawTexturePro(ps.texture,
                    (Rectangle){0, 0, (float)ds.video_codec_ctx->width,
                                (float)ds.video_codec_ctx->height},
                    dest_rect, Vector2Zero(), 0, WHITE);
     pthread_mutex_unlock(&ds.texture_mutex);
 
-    for (int i = 0; i < shaderArray.shaderCount; i++)
-    {
-        EndShaderMode();
-    }
+    // for (int i = 0; i < shaderArray.shaderCount; i++)
+    // {
+    //     EndShaderMode();
+    // }
 
     if (GetMousePosition().y > screenHeight - settingHeight)
         last_hover_time = GetTime();
     if (GetTime() - last_hover_time < 5.0f)
     {
         double alpha = 1 - (GetTime() - last_hover_time);
-
         DrawRectangleRec(seekBar, Fade(GetColor(0xB7B7B7FF), alpha));
         DrawRectangleRec(seekBarCurrentPos, Fade(DARKBLUE, alpha));
         DrawCircleSector((Vector2){seekBarCurrentPos.x + seekBarCurrentPos.width, seekBarCurrentPos.y + seekBarCurrentPos.height / 2}, seekBarCurrentPos.height / 2, 270, 360 + 90, 50, Fade(DARKBLUE, alpha));

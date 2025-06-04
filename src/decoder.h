@@ -28,7 +28,6 @@ struct DecoderState
     AVStream *video_stream;
     AVStream *audio_stream;
     AVStream *subtitle_stream;
-    AVFrame *frame;
     AVPacket *packet;
     SwrContext *swr_ctx;
     struct SwsContext *sws_ctx;
@@ -52,8 +51,7 @@ extern DecoderState ds;
 extern int64_t frame_time;
 
 int decoder_init(char *filename);
-int decoder_decode_frame(Texture texture, int64_t *frame_time);
-int decoder_fill_audio_queue(Texture texture, int64_t *frame_time);
+int decoder_decode_frame(void);
 int decoder_change_audio(char *language);
 int decoder_change_subtitle(char *language);
 void decoder_stop(void);
