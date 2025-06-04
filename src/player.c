@@ -52,6 +52,7 @@ char *get_file_title(DecoderState *ds)
 
 void audio_callback(void *buffer, unsigned int frames)
 {
+    pthread_mutex_lock(&ds.queue_mutex);
     if (av_audio_fifo_size(ds.fifo) >= (int)frames)
     {
         int ret = av_audio_fifo_read(ds.fifo, &buffer, frames);
@@ -64,6 +65,7 @@ void audio_callback(void *buffer, unsigned int frames)
     {
         memset(buffer, 0, frames * sizeof(float) * 2);
     }
+    pthread_mutex_unlock(&ds.queue_mutex);
 }
 
 void *bundle_load_resource(const char *file_path, size_t *size)
@@ -123,7 +125,7 @@ int player_init(char *filename)
 
     // SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     // InitWindow(800, 600, ps.file_title);
-    SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
+    // SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
     SetWindowPosition(0, 0);
     ps.file_title = get_file_title(&ds);
 
@@ -143,9 +145,11 @@ int player_init(char *filename)
     bbTexture = bundle_load_texture("./assets/icons/bb.png");
 
     InitAudioDevice();
-    ps.raylib_audio_stream =
-        LoadAudioStream(ds.audio_codec_ctx->sample_rate, 32,
-                        ds.audio_codec_ctx->ch_layout.nb_channels);
+    int sample_rate = ds.audio_codec_ctx->sample_rate;
+    int sample_size = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16) * 8;
+    int channels = 2;
+    printf("%d  %d %d\n", sample_rate, sample_size, channels);
+    ps.raylib_audio_stream = LoadAudioStream(sample_rate, sample_size, channels);
     SetAudioStreamCallback(ps.raylib_audio_stream, audio_callback);
 
     Image frame_image = {.data = ds.rgba_frame_buffer,
@@ -157,8 +161,7 @@ int player_init(char *filename)
     PlayAudioStream(ps.raylib_audio_stream);
     ps.volume = 100;
     SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
-    SetTargetFPS(ds.video_codec_ctx->framerate.num /
-                 ds.video_codec_ctx->framerate.den);
+    // SetTargetFPS(ds.video_codec_ctx->framerate.num / ds.video_codec_ctx->framerate.den);
     shaderArray.capacity = 4; // Initial capacity
     shaderArray.shaders = malloc(shaderArray.capacity * sizeof(Shader));
     shaderArray.shaderCount = 0;
@@ -256,10 +259,10 @@ void player_update(void)
     }
     if (isPlaying)
     {
-        decoder_decode_frame(ps.texture, &frame_time);
+        // decoder_decode_frame(ps.texture, &frame_time);
         isPlaying ? PlayAudioStream(ps.raylib_audio_stream)
                   : PauseAudioStream(ps.raylib_audio_stream);
-        decoder_fill_audio_queue(ps.texture, &frame_time);
+        // decoder_fill_audio_queue(ps.texture, &frame_time);
     }
     Rectangle setting = {0, (float)screenHeight - settingHeight,
                          (float)screenWidth, settingHeight};
@@ -315,12 +318,12 @@ void player_update(void)
     }
     if (IsKeyPressed(KEY_B))
     {
-        decoder_change_audio(audio_language);
+        // decoder_change_audio(audio_language);
         last_audio_change_time = GetTime();
     }
     if (IsKeyPressed(KEY_V))
     {
-        decoder_change_subtitle(subtitle_language);
+        // decoder_change_subtitle(subtitle_language);
         last_subtitle_change_time = GetTime();
     }
 
@@ -408,7 +411,7 @@ void player_update(void)
             if (GetFileExtension(droppedFiles.paths[i]) &&
                 strcmp(GetFileExtension(droppedFiles.paths[i]), ".fs") ==
                     0)
-            { // Check for shader files
+            {
                 add_shader(droppedFiles.paths[i]);
             }
         }
@@ -436,10 +439,12 @@ void player_update(void)
             BeginShaderMode(shaderArray.shaders[i]); // Stack additional shaders
         }
     }
+    pthread_mutex_lock(&ds.texture_mutex);
     DrawTexturePro(ps.texture,
                    (Rectangle){0, 0, (float)ds.video_codec_ctx->width,
                                (float)ds.video_codec_ctx->height},
                    dest_rect, Vector2Zero(), 0, WHITE);
+    pthread_mutex_unlock(&ds.texture_mutex);
 
     for (int i = 0; i < shaderArray.shaderCount; i++)
     {
@@ -505,7 +510,7 @@ void player_update(void)
 
 void player_close(void)
 {
-
+    decoder_stop();
     for (int i = 0; i < shaderArray.shaderCount; i++)
     {
         UnloadShader(shaderArray.shaders[i]);
@@ -521,16 +526,6 @@ void player_close(void)
     UnloadTexture(pauseTexture);
     UnloadTexture(ffTexture);
     UnloadTexture(bbTexture);
-
-    av_packet_free(&ds.packet);
-    av_frame_free(&ds.frame);
-    sws_freeContext(ds.sws_ctx);
-    free(ds.rgba_frame_buffer);
-    av_audio_fifo_free(ds.fifo);
-    swr_free(&ds.swr_ctx);
-    avcodec_free_context(&ds.video_codec_ctx);
-    avcodec_free_context(&ds.audio_codec_ctx);
-    avformat_close_input(&ds.format_ctx);
 
     CloseWindow();
 }

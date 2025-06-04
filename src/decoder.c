@@ -1,6 +1,8 @@
 #include "decoder.h"
 #include "raylib.h"
 #include "subtitle.h"
+#include "queue.h"
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +14,7 @@
 #include <libswresample/swresample.h>
 #include <libavutil/dict.h>
 
-#define FIFO_MIN_FRAMES 1024 * 4
+#define FIFO_MIN_FRAMES 1
 
 DecoderState ds = {0};
 int64_t frame_time = 0;
@@ -23,6 +25,73 @@ int current_audio_index = 0;
 int subtitle_stream_indices[10];
 int num_subtitle_streams = 0;
 
+
+int decoder_decode_frame(Texture texture, int64_t *frame_time)
+{
+    int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
+    if (read_bytes < 0)
+        return -1;
+
+    if (ds.packet->stream_index == ds.audio_stream_idx)
+    {
+        if (avcodec_send_packet(ds.audio_codec_ctx, ds.packet) == 0)
+        {
+            AVFrame *resampled_frame = av_frame_alloc();
+            resampled_frame->sample_rate = ds.audio_codec_ctx->sample_rate;
+            AVChannelLayout out_ch_layout;
+            av_channel_layout_default(&out_ch_layout, 2);
+            av_channel_layout_copy(&resampled_frame->ch_layout, &out_ch_layout);
+            resampled_frame->format = AV_SAMPLE_FMT_S16;
+            av_frame_get_buffer(resampled_frame, 0);
+            while (avcodec_receive_frame(ds.audio_codec_ctx, ds.frame) == 0)
+            {
+                swr_convert_frame(ds.swr_ctx, resampled_frame, ds.frame);
+            }
+            av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
+            av_frame_free(&resampled_frame);
+        }
+    }
+
+   return 0;
+}
+
+void *decode_thread_func(void *arg)
+{
+    DecoderState *ds = (DecoderState *)arg;
+    // Print all audio information
+    // printf(
+    
+    while (ds->decoding)
+    {
+        decoder_decode_frame(ps.texture, &frame_time);
+        // decoder_fill_audio_queue(ps.texture, &frame_time);
+    }
+    // DecoderState *ds = (DecoderState *)arg; // Suppress unused parameter warning
+    // while (ds->decoding)
+    // {
+
+    //     int read_bytes = av_read_frame(ds->format_ctx, ds->packet);
+    //     if (read_bytes < 0)
+    //         return NULL;
+    //     if (ds->packet->stream_index == ds->video_stream_idx)
+    //     {
+    //         pthread_mutex_lock(&ds->queue_mutex);
+    //         queue_push(ds->video_queue, ds->packet);
+    //         pthread_mutex_unlock(&ds->queue_mutex);
+    //     }
+    //     else
+    //     {
+    //         av_packet_free(&ds->packet);
+    //     }
+    // }
+    // return NULL;
+    // DecoderState *ds = (DecoderState *)arg;
+    // while (ds->decoding)
+    // {
+    //
+    // }
+    return NULL;
+}
 
 int decoder_init(char *filename)
 {
@@ -116,7 +185,7 @@ int decoder_init(char *filename)
     ds.frame = av_frame_alloc();
     ds.packet = av_packet_alloc();
 
-    ds.sws_ctx = sws_getContext(ds.video_codec_ctx->width, ds.video_codec_ctx->height, ds.video_codec_ctx->pix_fmt, ds.video_codec_ctx->width, ds.video_codec_ctx->height, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL, NULL, NULL);
+    ds.sws_ctx = sws_getContext(ds.video_codec_ctx->width, ds.video_codec_ctx->height, ds.video_codec_ctx->pix_fmt, ds.video_codec_ctx->width, ds.video_codec_ctx->height, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
 
     if (!ds.sws_ctx)
     {
@@ -134,7 +203,7 @@ int decoder_init(char *filename)
     AVChannelLayout out_ch_layout;
     av_channel_layout_default(&out_ch_layout, 2);
 
-    int ret = swr_alloc_set_opts2(&ds.swr_ctx, &out_ch_layout, AV_SAMPLE_FMT_FLT, ds.audio_codec_ctx->sample_rate, &ds.audio_codec_ctx->ch_layout, ds.audio_codec_ctx->sample_fmt, ds.audio_codec_ctx->sample_rate, 0, NULL);
+    int ret = swr_alloc_set_opts2(&ds.swr_ctx, &out_ch_layout, AV_SAMPLE_FMT_S16, ds.audio_codec_ctx->sample_rate, &ds.audio_codec_ctx->ch_layout, ds.audio_codec_ctx->sample_fmt, ds.audio_codec_ctx->sample_rate, 0, NULL);
 
     if (ret < 0)
     {
@@ -149,101 +218,40 @@ int decoder_init(char *filename)
     }
     ds.rgba_frame_buffer = malloc(ds.video_codec_ctx->width * ds.video_codec_ctx->height * 4);
     memset(ds.rgba_frame_buffer, 0, ds.video_codec_ctx->width * ds.video_codec_ctx->height * 4);
-    ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, FIFO_MIN_FRAMES * 2);
+    ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_S16, 2, FIFO_MIN_FRAMES * 2);
     ds.selected_subtitle_stream_idx = -1;
-    return 0;
-}
 
-int decoder_decode_frame(Texture texture, int64_t *frame_time)
-{
-    int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
-    if (read_bytes < 0)
+    ds.video_queue = queue_init();
+    if (!ds.video_queue)
+    {
+        fprintf(stderr, "ERROR: Could not initialize video queue\n");
         return -1;
-
-    if (ds.packet->stream_index == ds.audio_stream_idx)
+    }
+    ds.audio_queue = queue_init();
+    if (!ds.audio_queue)
     {
-        if (avcodec_send_packet(ds.audio_codec_ctx, ds.packet) == 0)
-        {
-            while (avcodec_receive_frame(ds.audio_codec_ctx, ds.frame) == 0)
-            {
-                AVFrame *resampled_frame = av_frame_alloc();
-                resampled_frame->sample_rate = ds.audio_codec_ctx->sample_rate;
-                AVChannelLayout out_ch_layout;
-                av_channel_layout_default(&out_ch_layout, 2);
-                av_channel_layout_copy(&resampled_frame->ch_layout, &out_ch_layout);
-                resampled_frame->format = AV_SAMPLE_FMT_FLT;
-                resampled_frame->nb_samples = ds.frame->nb_samples;
-
-                swr_convert_frame(ds.swr_ctx, resampled_frame, ds.frame);
-                av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
-                av_frame_free(&resampled_frame);
-            }
-        }
+        fprintf(stderr, "ERROR: Could not initialize audio queue\n");
+        queue_free(ds.audio_queue);
+        return -1;
     }
 
-    if (ds.packet->stream_index == ds.video_stream_idx)
-    {
-        int ret = avcodec_send_packet(ds.video_codec_ctx, ds.packet);
-        if (ret < 0)
-        {
-            fprintf(stderr, "ERROR: Error sending packet\n");
-            return -1;
-        }
+    pthread_mutex_init(&ds.queue_mutex, NULL);
+    ds.decoding = true;
+    pthread_create(&ds.decode_thread, NULL, decode_thread_func, &ds);
 
-        while (ret >= 0)
-        {
-            ret = avcodec_receive_frame(ds.video_codec_ctx, ds.frame);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                return -1;
-            else if (ret < 0)
-            {
-                fprintf(stderr, "ERROR: Error receiving frame\n");
-                return -1;
-            }
-
-            uint8_t *rgba_planes[1] = {ds.rgba_frame_buffer};
-            int rgba_linesizes[1] = {ds.video_codec_ctx->width * 4};
-            sws_scale(ds.sws_ctx, (const uint8_t *const *)ds.frame->data, ds.frame->linesize, 0, ds.video_codec_ctx->height, rgba_planes, rgba_linesizes);
-            UpdateTexture(texture, ds.rgba_frame_buffer);
-            *frame_time = (int)ds.frame->pts * av_q2d(ds.video_stream->time_base);
-        }
-    }
-    if (ds.packet->stream_index == ds.subtitle_stream_idx)
-    {
-        AVSubtitle sub;
-        int got_frame = 0;
-        if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
-        {
-            for (size_t i = 0; i < sub.num_rects; i++)
-            {
-                if (sub.rects[i]->type == SUBTITLE_TEXT)
-                {
-                    printf("Subtitle (Text): %s\n", sub.rects[i]->text);
-                    ds.current_subtitle = sub.rects[i]->text;
-                }
-                else if (sub.rects[i]->type == SUBTITLE_ASS)
-                {
-                    ds.current_subtitle = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
-                    printf("Subtitle (ASS): %s\n", sub.rects[i]->ass);
-                }
-                printf("Start Time: %u ms, End Time: %u ms\n", sub.start_display_time, sub.end_display_time);
-            }
-            avsubtitle_free(&sub);
-        }
-    }
     return 0;
 }
-
 int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
 {
-    while (av_audio_fifo_size(ds.fifo) < FIFO_MIN_FRAMES)
+    pthread_mutex_lock(&ds.queue_mutex);
+    while (av_audio_fifo_size(ds.fifo) <= FIFO_MIN_FRAMES)
     {
         if (av_read_frame(ds.format_ctx, ds.packet) == 0 && ds.packet->stream_index == ds.audio_stream_idx)
         {
             if (avcodec_send_packet(ds.audio_codec_ctx, ds.packet) != 0)
             {
                 fprintf(stderr, "ERROR: Error sending packet\n");
-                continue;
+                return -1;
             }
             while (avcodec_receive_frame(ds.audio_codec_ctx, ds.frame) == 0)
             {
@@ -252,185 +260,40 @@ int decoder_fill_audio_queue(Texture texture, int64_t *frame_time)
                 AVChannelLayout out_ch_layout;
                 av_channel_layout_default(&out_ch_layout, 2);
                 av_channel_layout_copy(&resampled_frame->ch_layout, &out_ch_layout);
-
-                resampled_frame->format = AV_SAMPLE_FMT_FLT;
+                
+                resampled_frame->format = AV_SAMPLE_FMT_S16;
                 resampled_frame->nb_samples = ds.frame->nb_samples;
-
+                
                 swr_convert_frame(ds.swr_ctx, resampled_frame, ds.frame);
                 av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
                 av_frame_free(&resampled_frame);
-            }
-        }
-        if (ds.packet->stream_index == ds.video_stream_idx)
-        {
-            int ret = avcodec_send_packet(ds.video_codec_ctx, ds.packet);
-            if (ret < 0)
-            {
-                fprintf(stderr, "ERROR: Error sending packet\n");
-                return -1;
-            }
 
-            while (ret >= 0)
-            {
-                ret = avcodec_receive_frame(ds.video_codec_ctx, ds.frame);
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                    return -1;
-                else if (ret < 0)
-                {
-                    fprintf(stderr, "ERROR: Error receiving frame\n");
-                    return -1;
-                }
-
-                uint8_t *rgba_planes[1] = {ds.rgba_frame_buffer};
-                int rgba_linesizes[1] = {ds.video_codec_ctx->width * 4};
-                sws_scale(ds.sws_ctx, (const uint8_t *const *)ds.frame->data, ds.frame->linesize, 0, ds.video_codec_ctx->height, rgba_planes, rgba_linesizes);
-                UpdateTexture(texture, ds.rgba_frame_buffer);
-                *frame_time = (int)ds.frame->pts * av_q2d(ds.video_stream->time_base);
+                printf("Audio decoding...\n");
             }
-        }
-        if (ds.packet->stream_index == ds.subtitle_stream_idx)
-        {
-            AVSubtitle sub;
-            int got_frame = 0;
-            if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
-            {
-                for (size_t i = 0; i < sub.num_rects; i++)
-                {
-                    if (sub.rects[i]->type == SUBTITLE_TEXT)
-                    {
-                        printf("Subtitle (Text): %s\n", sub.rects[i]->text);
-                    }
-                    else if (sub.rects[i]->type == SUBTITLE_ASS)
-                    {
-                        ds.current_subtitle = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
-                        printf("Subtitle (ASS): %s\n", ds.current_subtitle);
-                    }
-                    printf("Start Time: %u ms, End Time: %u ms\n", sub.start_display_time, sub.end_display_time);
-                }
-                avsubtitle_free(&sub);
-            }
-        }
+        }   
     }
-    av_packet_unref(ds.packet);
+    pthread_mutex_unlock(&ds.queue_mutex);
     return 0;
 }
-
-int decoder_change_audio(char *language)
+void decoder_stop(void)
 {
-    printf("Changing the audio...\n");
-    current_audio_index = (current_audio_index + 1) % num_audio_streams;
-    ds.audio_stream_idx = audio_stream_indices[current_audio_index];
-    ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
-    const AVCodec *audio_codec = avcodec_find_decoder(ds.audio_stream->codecpar->codec_id);
-    if (!audio_codec)
-    {
-        fprintf(stderr, "ERROR: Could not find audio codec\n");
-        return -1;
-    }
-    ds.audio_codec_ctx = avcodec_alloc_context3(audio_codec);
-    if (!ds.audio_codec_ctx)
-    {
-        fprintf(stderr, "ERROR: Could not allocate audio codec context\n");
-        return -1;
-    }
-    if (avcodec_parameters_to_context(ds.audio_codec_ctx, ds.audio_stream->codecpar) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not set audio codec parameters\n");
-        return -1;
-    }
-    if (avcodec_open2(ds.audio_codec_ctx, audio_codec, NULL) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not open audio codec\n");
-        return -1;
-    }
-    AVChannelLayout out_ch_layout;
-    av_channel_layout_default(&out_ch_layout, 2);
+    ds.decoding = false;
+    printf("waiting for thread to finish...\n");
+    pthread_join(ds.decode_thread, NULL);
+    // pthread_join(ds.video_thread, NULL);
+    pthread_mutex_destroy(&ds.queue_mutex);
 
-    int ret = swr_alloc_set_opts2(&ds.swr_ctx, &out_ch_layout, AV_SAMPLE_FMT_FLT, ds.audio_codec_ctx->sample_rate, &ds.audio_codec_ctx->ch_layout, ds.audio_codec_ctx->sample_fmt, ds.audio_codec_ctx->sample_rate, 0, NULL);
+    queue_free(ds.video_queue);
+    queue_free(ds.audio_queue);
 
-    if (ret < 0)
-    {
-        fprintf(stderr, "ERROR: swr_alloc_set_opts2() failed\n");
-        return -1;
-    }
-
-    if (swr_init(ds.swr_ctx) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not initialize SwrContext\n");
-        return -1;
-    }
-    ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLT, 2, FIFO_MIN_FRAMES * 2);
-
-    AVDictionaryEntry *tag = NULL;
-    char lang[256];
-    char title[256];
-    while ((tag = av_dict_get(ds.audio_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
-    {
-        if (strcmp(tag->key, "language") == 0)
-        {
-            strcpy(lang, tag->value);
-        }
-        if (strcmp(tag->key, "title") == 0)
-        {
-            strcpy(title, tag->value);
-        }
-    }
-    strcpy(language, strcat(strcat(title, " - "), lang));
-    return 0;
-}
-
-int decoder_change_subtitle(char *language)
-{
-    if(num_subtitle_streams == 0)
-    {
-        strcpy(language, "No subtitle available");
-        return -1;
-    }
-    printf("Changing the subtitle...\n");
-    ds.selected_subtitle_stream_idx = (ds.selected_subtitle_stream_idx + 1) % num_subtitle_streams;
-    ds.subtitle_stream_idx = subtitle_stream_indices[ds.selected_subtitle_stream_idx];
-    ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
-    const AVCodec *subtitle_codec = avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id);
-    if (!subtitle_codec)
-    {
-        fprintf(stderr, "ERROR: Could not find subtitle codec\n");
-        goto defer;
-    }
-    ds.subtitle_codec_ctx = avcodec_alloc_context3(subtitle_codec);
-    if (!ds.subtitle_codec_ctx)
-    {
-        fprintf(stderr, "ERROR: Could not allocate subtitle codec context\n");
-        goto defer;
-    }
-    if (avcodec_parameters_to_context(ds.subtitle_codec_ctx, ds.subtitle_stream->codecpar) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not set subtitle codec parameters\n");
-        goto defer;
-    }
-    if (avcodec_open2(ds.subtitle_codec_ctx, subtitle_codec, NULL) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not open subtitle codec\n");
-        goto defer;
-    }
-
-    AVDictionaryEntry *tag = NULL;
-    char lang[256];
-    char title[256];
-    while ((tag = av_dict_get(ds.subtitle_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
-    {
-        if (strcmp(tag->key, "language") == 0)
-        {
-            strcpy(lang, tag->value);
-        }
-        if (strcmp(tag->key, "title") == 0)
-        {
-            strcpy(title, tag->value);
-        }
-        printf("%s:%s\n", tag->key, tag->value);
-    }
-    strcpy(language, strcat(strcat(title, " - "), lang));
-    return 0;
-    defer:
-        strcpy(language, "ERROR: this subtitle is not supported");
-    return -1;
+    av_frame_free(&ds.frame);
+    av_packet_free(&ds.packet);
+    avcodec_free_context(&ds.video_codec_ctx);
+    avcodec_free_context(&ds.audio_codec_ctx);
+    avcodec_free_context(&ds.subtitle_codec_ctx);
+    sws_freeContext(ds.sws_ctx);
+    swr_free(&ds.swr_ctx);
+    av_audio_fifo_free(ds.fifo);
+    free(ds.rgba_frame_buffer);
+    avformat_close_input(&ds.format_ctx);
 }

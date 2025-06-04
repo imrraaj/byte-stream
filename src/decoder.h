@@ -2,15 +2,18 @@
 #define DECODER_H
 
 #include <stdbool.h>
+#include <pthread.h>
+
 #include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
 #include <libswresample/swresample.h>
-
 #include "raylib.h"
 #include "subtitle.h"
+
+#include "queue.h"
 
 struct DecoderState
 {
@@ -34,6 +37,14 @@ struct DecoderState
 
     uint8_t *rgba_frame_buffer;
     char *current_subtitle;
+
+    struct Queue *audio_queue;
+    struct Queue *video_queue;
+    pthread_mutex_t queue_mutex;
+    pthread_mutex_t texture_mutex;
+    pthread_t decode_thread;
+    pthread_t video_thread;
+    bool decoding;
 };
 
 typedef struct DecoderState DecoderState;
@@ -45,4 +56,7 @@ int decoder_decode_frame(Texture texture, int64_t *frame_time);
 int decoder_fill_audio_queue(Texture texture, int64_t *frame_time);
 int decoder_change_audio(char *language);
 int decoder_change_subtitle(char *language);
+void decoder_stop(void);
+void *decode_thread_func(void *arg);
+void *video_thread_func(void *arg);
 #endif // DECODER_H
