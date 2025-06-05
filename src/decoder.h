@@ -44,6 +44,7 @@ struct DecoderState
     pthread_t decode_thread;
     pthread_t video_thread;
     bool decoding;
+    pthread_mutex_t pause_mutex;
 };
 
 typedef struct DecoderState DecoderState;
@@ -57,4 +58,8 @@ int decoder_change_subtitle(char *language);
 void decoder_stop(void);
 void *decode_thread_func(void *arg);
 void *video_thread_func(void *arg);
+
+void pause_decoder(void);
+void resume_decoder(void);
+
 #endif // DECODER_H

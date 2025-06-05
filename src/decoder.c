@@ -27,6 +27,20 @@ int num_subtitle_streams = 0;
 static double playback_start_time = 0.0;
 static double first_frame_pts = 0.0;
 
+void check_pause(void)
+{
+    pthread_mutex_lock(&ds.pause_mutex);
+    pthread_mutex_unlock(&ds.pause_mutex);
+}
+void pause_decoder(void)
+{
+    pthread_mutex_lock(&ds.pause_mutex);
+}
+void resume_decoder(void)
+{
+    pthread_mutex_unlock(&ds.pause_mutex);
+}
+
 int decoder_decode_frame(void)
 {
     int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
@@ -68,6 +82,7 @@ void *decode_thread_func(void *arg)
     (void)arg;
     while (ds.decoding)
     {
+        check_pause();
         decoder_decode_frame();
     }
     return NULL;
@@ -83,6 +98,7 @@ void *video_thread_func(void *arg)
     }
     while (ds.decoding)
     {
+        check_pause();
         pthread_mutex_lock(&ds.queue_mutex);
         AVPacket *pkt = queue_pop(ds.video_queue);
         pthread_mutex_unlock(&ds.queue_mutex);
@@ -268,6 +284,7 @@ int decoder_init(char *filename)
 
     pthread_mutex_init(&ds.queue_mutex, NULL);
     pthread_mutex_init(&ds.texture_mutex, NULL);
+    pthread_mutex_init(&ds.pause_mutex, NULL);
     ds.decoding = true;
     pthread_create(&ds.decode_thread, NULL, decode_thread_func, NULL);
     pthread_create(&ds.video_thread, NULL, video_thread_func, NULL);

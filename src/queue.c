@@ -50,3 +50,20 @@ void queue_free(Queue *queue)
     queue->head = NULL;
     queue->tail = NULL;
 }
+
+void queue_clear(Queue *queue)
+{
+    if (!queue)
+        return;
+
+    PacketQueue *current = queue->head;
+    while (current)
+    {
+        PacketQueue *next = current->next;
+        av_packet_free(&current->packet);
+        free(current);
+        current = next;
+    }
+    queue->head = NULL;
+    queue->tail = NULL;
+}

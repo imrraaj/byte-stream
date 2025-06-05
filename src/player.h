@@ -10,6 +10,7 @@ struct PlayerState
   AudioStream raylib_audio_stream;
   char *file_title;
   float volume;
+  bool is_playing;
 };
 typedef enum
 {

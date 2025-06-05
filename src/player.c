@@ -14,7 +14,6 @@
 #define MAX_VOLUME_ALLOWED 250
 
 PlayerState ps = {0};
-bool isPlaying = true;
 Font google;
 Texture2D playTexture;
 Texture2D pauseTexture;
@@ -135,8 +134,7 @@ int player_init(char *filename)
     printf("---------------------------------------------\n");
 
     SetWindowTitle(ps.file_title);
-    // SetTargetFPS(3);
-    // SetGesturesEnabled(GESTURE_TAP | GESTURE_DOUBLETAP);
+    ps.is_playing = true;
 
     google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf");
     playTexture = bundle_load_texture("./assets/icons/play.png");
@@ -202,6 +200,22 @@ void to_timestamp(char *dst, int time)
     else
         sprintf(dst, "%02d:%02d", minutes, seconds);
 }
+
+void TogglePause(void)
+{
+    if (ps.is_playing)
+    {
+        pause_decoder();
+        PauseAudioStream(ps.raylib_audio_stream);
+        ps.is_playing = false;
+    }
+    else
+    {
+        resume_decoder();
+        ResumeAudioStream(ps.raylib_audio_stream);
+        ps.is_playing = true;
+    }
+}
 void player_update(void)
 {
     int screenWidth = GetDisplayWidth();
@@ -248,12 +262,8 @@ void player_update(void)
 
     if (IsKeyPressed(KEY_SPACE))
     {
-        isPlaying = !isPlaying;
+        TogglePause();
         last_hover_time = GetTime();
-    }
-    if (isPlaying)
-    {
-        isPlaying ? ResumeAudioStream(ps.raylib_audio_stream) : PauseAudioStream(ps.raylib_audio_stream);
     }
     Rectangle setting = {0, (float)screenHeight - settingHeight,
                          (float)screenWidth, settingHeight};
@@ -300,7 +310,7 @@ void player_update(void)
             last_volume_change_time = GetTime();
         }
     }
-    if (IsKeyPressed(KEY_P) && !isPlaying)
+    if (IsKeyPressed(KEY_P) && !ps.is_playing)
     {
         if (ExportImage(LoadImageFromTexture(ps.texture), "frame.png"))
         {
@@ -390,7 +400,7 @@ void player_update(void)
         }
         else
         {
-            isPlaying = !isPlaying;
+            TogglePause();
             last_hover_time = GetTime();
         }
     }
@@ -428,18 +438,21 @@ void player_update(void)
             BeginShaderMode(shaderArray.shaders[i]); // Stack additional shaders
         }
     }
-    pthread_mutex_lock(&ds.texture_mutex);
-    UpdateTexture(ps.texture, ds.rgba_frame_buffer);
+    if (ps.is_playing)
+    {
+        pthread_mutex_lock(&ds.texture_mutex);
+        UpdateTexture(ps.texture, ds.rgba_frame_buffer);
+        pthread_mutex_unlock(&ds.texture_mutex);
+    }
     DrawTexturePro(ps.texture,
                    (Rectangle){0, 0, (float)ds.video_codec_ctx->width,
                                (float)ds.video_codec_ctx->height},
                    dest_rect, Vector2Zero(), 0, WHITE);
-    pthread_mutex_unlock(&ds.texture_mutex);
 
-    // for (int i = 0; i < shaderArray.shaderCount; i++)
-    // {
-    //     EndShaderMode();
-    // }
+    for (int i = 0; i < shaderArray.shaderCount; i++)
+    {
+        EndShaderMode();
+    }
 
     if (GetMousePosition().y > screenHeight - settingHeight)
         last_hover_time = GetTime();
@@ -459,7 +472,7 @@ void player_update(void)
 
         // DrawCircleV((Vector2){screenWidth / 2, screenHeight / 2}, 48, Fade(RAYWHITE, alpha));
 
-        DrawTexturePro(isPlaying ? pauseTexture : playTexture,
+        DrawTexturePro(ps.is_playing ? pauseTexture : playTexture,
                        (Rectangle){0, 0, playTexture.width, playTexture.height},
                        (Rectangle){screenWidth / 2 - playTexture.width / 2, screenHeight / 2 - playTexture.height / 2, playTexture.width, playTexture.height},
                        (Vector2){0, 0}, 0.0f,

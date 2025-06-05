@@ -31,4 +31,5 @@ Queue *queue_init(void);
 void queue_push(Queue *queue, AVPacket *packet);
 AVPacket *queue_pop(Queue *queue);
 void queue_free(Queue *queue);
+void queue_clear(Queue *queue);
 #endif // QUEUE_H
