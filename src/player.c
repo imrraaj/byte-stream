@@ -290,7 +290,7 @@ void player_update(void)
 
     // Vector2 pill = {seekBar.x + seekBar.width * (float)(frame_time / total_runtime), seekBar.y};
 
-    if (IsKeyPressed(KEY_UP))
+    if (IsKeyPressed(KEY_UP) || GetMouseWheelMove() > 0)
     {
         if (ps.volume < MAX_VOLUME_ALLOWED)
         {
@@ -300,7 +300,7 @@ void player_update(void)
             last_volume_change_time = GetTime();
         }
     }
-    if (IsKeyPressed(KEY_DOWN))
+    if (IsKeyPressed(KEY_DOWN) || GetMouseWheelMove() < 0)
     {
         if (ps.volume > MIN_VOLUME_ALLOWED)
         {
@@ -482,9 +482,21 @@ void player_update(void)
     {
         int vol_height = 400;
         int vol_width = 20;
-        Rectangle vol_inner_rect = {GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height * ps.volume / 250};
-        DrawRectangleLines(GetScreenWidth() - 2 * vol_width, (GetScreenHeight() / 2.0f) - vol_height / 2.0, vol_width, vol_height, BLACK);
-        DrawRectangleRec(vol_inner_rect, BLACK);
+        float filled_height = vol_height * ps.volume / MAX_VOLUME_ALLOWED;
+        float filled_y = (GetScreenHeight() / 2.0f) + (vol_height / 2.0f) - filled_height;
+        Rectangle vol_inner_rect = {
+            GetScreenWidth() - 2 * vol_width,
+            filled_y,
+            vol_width,
+            filled_height};
+
+        DrawRectangleLines(
+            GetScreenWidth() - 2 * vol_width,
+            (GetScreenHeight() / 2.0f) - vol_height / 2.0f,
+            vol_width,
+            vol_height,
+            ORANGE);
+        DrawRectangleRec(vol_inner_rect, Fade(ORANGE, 0.8f));
         Vector2 textSize = MeasureTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
         DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);

@@ -24,8 +24,9 @@ int num_audio_streams = 0;
 int current_audio_index = 0;
 int subtitle_stream_indices[10];
 int num_subtitle_streams = 0;
-static double playback_start_time = 0.0;
-static double first_frame_pts = 0.0;
+// static double playback_start_time = 0.0;
+// static double first_frame_pts = 0.0;
+// static double pause_time = 0.0;
 
 void check_pause(void)
 {
@@ -34,10 +35,12 @@ void check_pause(void)
 }
 void pause_decoder(void)
 {
+    // pause_time = GetTime();
     pthread_mutex_lock(&ds.pause_mutex);
 }
 void resume_decoder(void)
 {
+    // playback_start_time += pause_time;
     pthread_mutex_unlock(&ds.pause_mutex);
 }
 
@@ -114,19 +117,20 @@ void *video_thread_func(void *arg)
             av_frame_get_buffer(video_frame, 0);
             while (avcodec_receive_frame(ds.video_codec_ctx, video_frame) == 0)
             {
-                double pts_seconds = video_frame->pts * av_q2d(ds.video_stream->time_base);
+                // double pts_seconds = video_frame->pts * av_q2d(ds.video_stream->time_base);
 
-                if (playback_start_time == 0.0)
-                {
-                    playback_start_time = GetTime();
-                    first_frame_pts = pts_seconds;
-                }
+                // if (playback_start_time == 0.0)
+                // {
+                //     playback_start_time = GetTime();
+                //     first_frame_pts = pts_seconds;
+                // }
 
-                double current_time = GetTime() - playback_start_time;
-                double delay = (pts_seconds - first_frame_pts) - current_time;
+                // double current_time = GetTime() - playback_start_time;
+                // double delay = (pts_seconds - first_frame_pts) - current_time;
 
-                if (delay > 0)
-                    WaitTime(delay);
+                // if (delay > 0)
+                //     WaitTime(delay);
+                WaitTime(1.0f / av_q2d(ds.video_stream->r_frame_rate));
                 pthread_mutex_lock(&ds.texture_mutex);
                 uint8_t *rgba_planes[] = {ds.rgba_frame_buffer};
                 int rgba_linesizes[] = {ds.video_codec_ctx->width * 4};
@@ -294,7 +298,7 @@ int decoder_init(char *filename)
 void decoder_stop(void)
 {
     ds.decoding = false;
-    printf("waiting for thread to finish...\n");
+    pthread_mutex_unlock(&ds.pause_mutex);
     pthread_join(ds.decode_thread, NULL);
     pthread_join(ds.video_thread, NULL);
     pthread_mutex_destroy(&ds.queue_mutex);
@@ -303,7 +307,6 @@ void decoder_stop(void)
     queue_free(ds.video_queue);
     queue_free(ds.audio_queue);
 
-    // av_frame_free(&ds.frame);
     av_packet_free(&ds.packet);
     avcodec_free_context(&ds.video_codec_ctx);
     avcodec_free_context(&ds.audio_codec_ctx);
