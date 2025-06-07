@@ -11,7 +11,7 @@
 #define BUTTON_RADIUS ICON_SIZE * 1.5f
 
 #define MIN_VOLUME_ALLOWED 0
-#define MAX_VOLUME_ALLOWED 250
+#define MAX_VOLUME_ALLOWED 500
 
 PlayerState ps = {0};
 Font google;
@@ -149,7 +149,7 @@ int player_init(char *filename)
     ps.raylib_audio_stream = LoadAudioStream(sample_rate, sample_size, channels);
     SetAudioStreamCallback(ps.raylib_audio_stream, audio_callback);
     PlayAudioStream(ps.raylib_audio_stream);
-    ps.volume = 100;
+    ps.volume = 500;
     SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
 
     pthread_mutex_lock(&ds.texture_mutex);
@@ -245,20 +245,6 @@ void player_update(void)
         dest_rect.x = 0;
         dest_rect.y = (screenHeight - dest_rect.height) / 2;
     }
-    if (display_aspect_ratio < video_aspect_ratio)
-    {
-        dest_rect.height = (float)screenHeight;
-        dest_rect.width = screenHeight * video_aspect_ratio;
-        dest_rect.x = -(dest_rect.width - screenWidth) / 2;
-        dest_rect.y = 0;
-    }
-    else
-    {
-        dest_rect.width = (float)screenWidth;
-        dest_rect.height = screenWidth / video_aspect_ratio;
-        dest_rect.x = 0;
-        dest_rect.y = -(dest_rect.height - screenHeight) / 2;
-    }
 
     if (IsKeyPressed(KEY_SPACE))
     {
@@ -319,12 +305,12 @@ void player_update(void)
     }
     if (IsKeyPressed(KEY_B))
     {
-        // decoder_change_audio(audio_language);
+        decoder_change_audio(audio_language);
         last_audio_change_time = GetTime();
     }
     if (IsKeyPressed(KEY_V))
     {
-        // decoder_change_subtitle(subtitle_language);
+        decoder_change_subtitle(subtitle_language);
         last_subtitle_change_time = GetTime();
     }
 
@@ -333,21 +319,20 @@ void player_update(void)
         double seek_time = frame_time - 5.0;
         if (seek_time < 0)
             seek_time = 0;
-        printf("Seeking backward to %.2f seconds\n", seek_time);
-        int64_t seek_target = (int64_t)(seek_time / av_q2d(ds.video_stream->time_base));
-        if (avformat_seek_file(
-                ds.format_ctx,
-                ds.video_stream_idx,
-                INT64_MIN,
-                seek_target,
-                INT64_MAX,
-                AVSEEK_FLAG_BACKWARD) < 0)
+        if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
         {
-            printf("Seek error!\n");
+            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
+        }
+        if (avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
+        {
+            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
         }
 
         avcodec_flush_buffers(ds.video_codec_ctx);
+        avcodec_flush_buffers(ds.audio_codec_ctx);
+        queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
+
         frame_time = seek_time;
         last_hover_time = GetTime();
     }
@@ -360,14 +345,20 @@ void player_update(void)
         if (seek_time > total_runtime)
             seek_time = total_runtime;
 
-        printf("Seeking forward to %.2f seconds\n", seek_time);
-        int64_t seek_target = (int64_t)(seek_time / av_q2d(ds.video_stream->time_base));
-        if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0)
+        if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
         {
-            printf("Seek error!\n");
+            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
         }
+        if (avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
+        {
+            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
+        }
+
         avcodec_flush_buffers(ds.video_codec_ctx);
+        avcodec_flush_buffers(ds.audio_codec_ctx);
+        queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
+
         frame_time = seek_time;
         last_hover_time = GetTime();
     }
