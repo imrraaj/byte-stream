@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
@@ -18,7 +19,6 @@
 
 DecoderState ds = {0};
 int64_t frame_time = 0;
-float playback_speed = 1.25;
 
 static int indices[100];
 static int num_audio_streams = 0;
@@ -31,6 +31,8 @@ static int sub_indices_index = 0;
 static double playback_start_time = 0.0;
 static double first_frame_pts = 0.0;
 static double pause_time = 0.0;
+static double audio_clock = 0.0;
+static bool sync_initialized = false;
 
 void check_pause(void)
 {
@@ -39,20 +41,37 @@ void check_pause(void)
 }
 void pause_decoder(void)
 {
-    pause_time = GetTime();
+    pause_time = GetTime() - playback_start_time;
     pthread_mutex_lock(&ds.pause_mutex);
 }
 void resume_decoder(void)
 {
-    playback_start_time += pause_time;
+    if (pause_time > 0) {
+        playback_start_time = GetTime() - pause_time;
+    }
+    pause_time = 0.0;
     pthread_mutex_unlock(&ds.pause_mutex);
+}
+
+void reset_sync_state(void)
+{
+    sync_initialized = false;
+    playback_start_time = 0.0;
+    first_frame_pts = 0.0;
+    pause_time = 0.0;
+    audio_clock = 0.0;
 }
 
 int decoder_decode_frame(void)
 {
     int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
-    if (read_bytes < 0)
+    if (read_bytes < 0) {
+        if (read_bytes == AVERROR_EOF) {
+            // End of stream reached
+            return -2;
+        }
         return -1;
+    }
 
     if (ds.packet->stream_index == ds.audio_stream_idx)
     {
@@ -69,6 +88,11 @@ int decoder_decode_frame(void)
             while (avcodec_receive_frame(ds.audio_codec_ctx, original_audio_frame) == 0)
             {
                 swr_convert_frame(ds.swr_ctx, resampled_frame, original_audio_frame);
+                
+                pthread_mutex_lock(&ds.queue_mutex);
+                double pts_seconds = original_audio_frame->pts * av_q2d(ds.audio_stream->time_base);
+                audio_clock = pts_seconds + (double)resampled_frame->nb_samples / ds.audio_codec_ctx->sample_rate;
+                pthread_mutex_unlock(&ds.queue_mutex);
             }
             av_audio_fifo_write(ds.fifo, (void **)resampled_frame->data, resampled_frame->nb_samples);
             av_frame_free(&resampled_frame);
@@ -89,7 +113,7 @@ int decoder_decode_frame(void)
         {
             for (size_t i = 0; i < sub.num_rects; i++)
             {
-                WaitTime(1.0f / av_q2d(ds.subtitle_stream->r_frame_rate));
+                // Subtitle timing handled by display duration
                 if (sub.rects[i]->type == SUBTITLE_TEXT)
                 {
                     printf("Subtitle (Text): %s\n", sub.rects[i]->text);
@@ -142,21 +166,63 @@ void *video_thread_func(void *arg)
 
         if (avcodec_send_packet(ds.video_codec_ctx, pkt) == 0)
         {
-            av_frame_get_buffer(video_frame, 0);
+            // Frame buffer already allocated
             while (avcodec_receive_frame(ds.video_codec_ctx, video_frame) == 0)
             {
                 double pts_seconds = video_frame->pts * av_q2d(ds.video_stream->time_base);
-                if (playback_start_time == 0.0)
+                
+                if (!sync_initialized)
                 {
                     playback_start_time = GetTime();
                     first_frame_pts = pts_seconds;
+                    sync_initialized = true;
                 }
+                
                 double current_time = GetTime() - playback_start_time;
-                double delay = (pts_seconds - first_frame_pts) - current_time;
-
-                if (delay > 0)
-                    WaitTime(delay);
-                // WaitTime(1.0f / av_q2d(ds.video_stream->r_frame_rate));
+                double video_time = pts_seconds - first_frame_pts;
+                
+                pthread_mutex_lock(&ds.queue_mutex);
+                double audio_time = audio_clock - first_frame_pts;
+                pthread_mutex_unlock(&ds.queue_mutex);
+                
+                // Calculate proper frame delay based on frame rate
+                double frame_rate = av_q2d(ds.video_stream->r_frame_rate);
+                double frame_delay = 1.0 / frame_rate;
+                
+                // Simple and stable audio-video synchronization
+                double sync_threshold = 0.1; // 100ms threshold - more tolerant
+                double av_diff = video_time - audio_time;
+                
+                // Calculate target delay based on video timing
+                double target_delay = video_time - current_time;
+                
+                // Apply gentle correction based on audio-video difference
+                if (av_diff > sync_threshold)
+                {
+                    // Video is ahead - add small correction
+                    target_delay += av_diff * 0.1;
+                }
+                else if (av_diff < -sync_threshold)
+                {
+                    // Audio is ahead - reduce delay slightly
+                    target_delay *= 0.8;
+                }
+                
+                // Apply the delay with reasonable bounds
+                if (target_delay > 0 && target_delay < 0.2)
+                {
+                    WaitTime(target_delay);
+                }
+                else if (target_delay <= 0)
+                {
+                    // Use minimal frame delay when behind
+                    WaitTime(frame_delay * 0.2);
+                }
+                else
+                {
+                    // Cap excessive delays
+                    WaitTime(0.2);
+                }
                 pthread_mutex_lock(&ds.texture_mutex);
                 uint8_t *rgba_planes[] = {ds.rgba_frame_buffer};
                 frame_time = (int64_t)(video_frame->pts * av_q2d(ds.video_stream->time_base));
@@ -329,25 +395,71 @@ int decoder_init(char *filename)
 
 void decoder_stop(void)
 {
+    // Signal threads to stop
     ds.decoding = false;
+    
+    // Ensure threads aren't stuck in pause - unlock if locked
+    if (pthread_mutex_trylock(&ds.pause_mutex) != 0) {
+        pthread_mutex_unlock(&ds.pause_mutex);
+    }
     pthread_mutex_unlock(&ds.pause_mutex);
+    
+    // Wait for threads to finish gracefully
     pthread_join(ds.decode_thread, NULL);
     pthread_join(ds.video_thread, NULL);
+    
+    // Clean up mutexes
     pthread_mutex_destroy(&ds.queue_mutex);
     pthread_mutex_destroy(&ds.texture_mutex);
+    pthread_mutex_destroy(&ds.pause_mutex);
 
-    queue_free(ds.video_queue);
-    queue_free(ds.audio_queue);
+    // Clean up queues safely
+    if (ds.video_queue) {
+        queue_free(ds.video_queue);
+        ds.video_queue = NULL;
+    }
+    if (ds.audio_queue) {
+        queue_free(ds.audio_queue);
+        ds.audio_queue = NULL;
+    }
 
-    av_packet_free(&ds.packet);
-    avcodec_free_context(&ds.video_codec_ctx);
-    avcodec_free_context(&ds.audio_codec_ctx);
-    avcodec_free_context(&ds.subtitle_codec_ctx);
-    sws_freeContext(ds.sws_ctx);
-    swr_free(&ds.swr_ctx);
-    av_audio_fifo_free(ds.fifo);
-    free(ds.rgba_frame_buffer);
-    avformat_close_input(&ds.format_ctx);
+    // Clean up FFmpeg resources safely
+    if (ds.packet) {
+        av_packet_free(&ds.packet);
+        ds.packet = NULL;
+    }
+    if (ds.video_codec_ctx) {
+        avcodec_free_context(&ds.video_codec_ctx);
+        ds.video_codec_ctx = NULL;
+    }
+    if (ds.audio_codec_ctx) {
+        avcodec_free_context(&ds.audio_codec_ctx);
+        ds.audio_codec_ctx = NULL;
+    }
+    if (ds.subtitle_codec_ctx) {
+        avcodec_free_context(&ds.subtitle_codec_ctx);
+        ds.subtitle_codec_ctx = NULL;
+    }
+    if (ds.sws_ctx) {
+        sws_freeContext(ds.sws_ctx);
+        ds.sws_ctx = NULL;
+    }
+    if (ds.swr_ctx) {
+        swr_free(&ds.swr_ctx);
+        ds.swr_ctx = NULL;
+    }
+    if (ds.fifo) {
+        av_audio_fifo_free(ds.fifo);
+        ds.fifo = NULL;
+    }
+    if (ds.rgba_frame_buffer) {
+        free(ds.rgba_frame_buffer);
+        ds.rgba_frame_buffer = NULL;
+    }
+    if (ds.format_ctx) {
+        avformat_close_input(&ds.format_ctx);
+        ds.format_ctx = NULL;
+    }
 }
 
 int decoder_change_audio(char *language)
@@ -410,6 +522,8 @@ int decoder_change_audio(char *language)
     avcodec_flush_buffers(ds.audio_codec_ctx);
     queue_clear(ds.video_queue);
     av_audio_fifo_reset(ds.fifo);
+    
+    reset_sync_state();
 
     // ==========================================================
     // ============= NEW & CRITICAL SECTION END =================

@@ -27,6 +27,7 @@ char audio_language[512];
 char subtitle_language[512];
 static float lastClickTime = 0.0f;              // Time of the last click
 static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
+static bool show_help_menu = false;             // Help menu visibility
 
 typedef struct
 {
@@ -51,6 +52,12 @@ char *get_file_title(DecoderState *ds)
 
 void audio_callback(void *buffer, unsigned int frames)
 {
+    if (!ps.is_playing)
+    {
+        memset(buffer, 0, frames * sizeof(float) * 2);
+        return;
+    }
+    
     pthread_mutex_lock(&ds.queue_mutex);
     if (av_audio_fifo_size(ds.fifo) >= (int)frames)
     {
@@ -205,15 +212,15 @@ void TogglePause(void)
 {
     if (ps.is_playing)
     {
+        ps.is_playing = false;
         pause_decoder();
         PauseAudioStream(ps.raylib_audio_stream);
-        ps.is_playing = false;
     }
     else
     {
-        resume_decoder();
-        ResumeAudioStream(ps.raylib_audio_stream);
         ps.is_playing = true;
+        ResumeAudioStream(ps.raylib_audio_stream);
+        resume_decoder();
     }
 }
 void player_update(void)
@@ -249,6 +256,13 @@ void player_update(void)
     if (IsKeyPressed(KEY_SPACE))
     {
         TogglePause();
+        last_hover_time = GetTime();
+    }
+    
+    // Toggle help menu with ? key (question mark key)
+    if (IsKeyPressed(KEY_SLASH) && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)))
+    {
+        show_help_menu = !show_help_menu;
         last_hover_time = GetTime();
     }
     Rectangle setting = {0, (float)screenHeight - settingHeight,
@@ -332,6 +346,8 @@ void player_update(void)
         avcodec_flush_buffers(ds.audio_codec_ctx);
         queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
+        
+        reset_sync_state();
 
         frame_time = seek_time;
         last_hover_time = GetTime();
@@ -358,6 +374,8 @@ void player_update(void)
         avcodec_flush_buffers(ds.audio_codec_ctx);
         queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
+        
+        reset_sync_state();
 
         frame_time = seek_time;
         last_hover_time = GetTime();
@@ -386,7 +404,12 @@ void player_update(void)
                 printf("Seek error!\n");
             }
             avcodec_flush_buffers(ds.video_codec_ctx);
+            avcodec_flush_buffers(ds.audio_codec_ctx);
+            queue_clear(ds.video_queue);
             av_audio_fifo_reset(ds.fifo);
+            
+            reset_sync_state();
+            
             frame_time = seekTime;
         }
         else
@@ -429,12 +452,9 @@ void player_update(void)
             BeginShaderMode(shaderArray.shaders[i]); // Stack additional shaders
         }
     }
-    if (ps.is_playing)
-    {
-        pthread_mutex_lock(&ds.texture_mutex);
-        UpdateTexture(ps.texture, ds.rgba_frame_buffer);
-        pthread_mutex_unlock(&ds.texture_mutex);
-    }
+    pthread_mutex_lock(&ds.texture_mutex);
+    UpdateTexture(ps.texture, ds.rgba_frame_buffer);
+    pthread_mutex_unlock(&ds.texture_mutex);
     DrawTexturePro(ps.texture,
                    (Rectangle){0, 0, (float)ds.video_codec_ctx->width,
                                (float)ds.video_codec_ctx->height},
@@ -510,6 +530,58 @@ void player_update(void)
     DrawTextEx(google, ds.current_subtitle,
                (Vector2){screenWidth / 2 - a.x / 2, screenHeight - settingHeight + settingHeight * 0.15f},
                FONT_SIZE * 1.25, 0, WHITE);
+
+    // Draw help menu if visible
+    if (show_help_menu)
+    {
+        // Semi-transparent overlay background
+        DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.8f));
+        
+        // Help menu title
+        const char *title = "KEYBOARD CONTROLS";
+        Vector2 titleSize = MeasureTextEx(google, title, FONT_SIZE * 1.5, 0);
+        Vector2 titlePos = {screenWidth / 2 - titleSize.x / 2, 50};
+        DrawTextEx(google, title, titlePos, FONT_SIZE * 1.5, 0, WHITE);
+        
+        // Help menu content
+        const char *help_text[] = {
+            "SPACE           - Play/Pause",
+            "LEFT/RIGHT      - Seek -5s/+5s",
+            "UP/DOWN         - Volume +/-",
+            "Mouse Wheel     - Volume +/-",
+            "B               - Change Audio Track",
+            "V               - Change Subtitle Track",
+            "P               - Save Screenshot (when paused)",
+            "U               - Unload Shaders",
+            "?               - Toggle this Help Menu",
+            "ESC             - Close Player",
+            "",
+            "MOUSE CONTROLS:",
+            "Click Seekbar   - Seek to Position",
+            "Click Video     - Play/Pause",
+            "Drag & Drop     - Load Shader (.fs files)"
+        };
+        
+        int help_lines = sizeof(help_text) / sizeof(help_text[0]);
+        float line_height = FONT_SIZE * 0.8f + 5;
+        float start_y = titlePos.y + titleSize.y + 40;
+        
+        for (int i = 0; i < help_lines; i++)
+        {
+            Vector2 pos = {100, start_y + i * line_height};
+            Color text_color = (strlen(help_text[i]) == 0) ? BLANK : 
+                              (strstr(help_text[i], "MOUSE CONTROLS") != NULL) ? YELLOW : WHITE;
+            if (text_color.a > 0)
+                DrawTextEx(google, help_text[i], pos, FONT_SIZE * 0.8f, 0, text_color);
+        }
+        
+        // Instructions at bottom
+        const char *close_text = "Press ? again to close this menu";
+        Vector2 closeSize = MeasureTextEx(google, close_text, FONT_SIZE * 0.7f, 0);
+        Vector2 closePos = {screenWidth / 2 - closeSize.x / 2, screenHeight - 50};
+        DrawTextEx(google, close_text, closePos, FONT_SIZE * 0.7f, 0, GRAY);
+    }
+    
     EndDrawing();
 }
 

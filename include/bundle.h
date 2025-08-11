@@ -7,13 +7,13 @@ typedef struct { // generator.c:58
 } Resource; // generator.c:62
 size_t resources_count = 7; // generator.c:63
 Resource resources[] = { // generator.c:64
-    {.file_path = "./assets/icons/bb.png", .offset = 0, .size = 668}, // generator.c:66
-    {.file_path = "./assets/icons/ff.png", .offset = 669, .size = 690}, // generator.c:66
-    {.file_path = "./assets/icons/pause.png", .offset = 1360, .size = 515}, // generator.c:66
-    {.file_path = "./assets/icons/play.png", .offset = 1876, .size = 658}, // generator.c:66
-    {.file_path = "./assets/icons/stop.png", .offset = 2535, .size = 268}, // generator.c:66
-    {.file_path = "./assets/fonts/CircularSpotifyText-Black.otf", .offset = 2804, .size = 75848}, // generator.c:66
-    {.file_path = "./assets/fonts/CircularSpotifyText-Bold.otf", .offset = 78653, .size = 76032}, // generator.c:66
+    {.file_path = "./assets/icons/bb.png", .offset = 0, .size = 668}, // generator.c:67
+    {.file_path = "./assets/icons/ff.png", .offset = 669, .size = 690}, // generator.c:67
+    {.file_path = "./assets/icons/pause.png", .offset = 1360, .size = 515}, // generator.c:67
+    {.file_path = "./assets/icons/play.png", .offset = 1876, .size = 658}, // generator.c:67
+    {.file_path = "./assets/icons/stop.png", .offset = 2535, .size = 268}, // generator.c:67
+    {.file_path = "./assets/fonts/CircularSpotifyText-Black.otf", .offset = 2804, .size = 75848}, // generator.c:67
+    {.file_path = "./assets/fonts/CircularSpotifyText-Bold.otf", .offset = 78653, .size = 76032}, // generator.c:67
 }; // generator.c:69
 unsigned char bundle[] = { // generator.c:71
      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x40,  // generator.c:78

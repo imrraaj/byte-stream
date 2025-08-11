@@ -3,3 +3,4 @@ videos/
 .vscode/
 compile_commands.json
 generator
+include/bundle.h
