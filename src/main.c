@@ -14,12 +14,12 @@ int main(int argc, char **argv)
     InitWindow(800, 600, "Byte Stream Player");
     SetTargetFPS(60);
 
-    Image logo = LoadImage("./assets/logos/bytestream-256.png");
-    Texture2D logo_texture = LoadTextureFromImage(logo);
+    Texture2D logo_texture = bundle_load_texture("./assets/logos/bytestream-256.png");
+    Image logo = LoadImageFromTexture(logo_texture);
     SetWindowIcon(logo);
 
-    Font google48 = LoadFontEx("assets/fonts/CircularSpotifyText-Bold.otf", 48, 0, 0);
-    Font google26 = LoadFontEx("assets/fonts/CircularSpotifyText-Bold.otf", 26, 0, 0);
+    Font google48 = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 48);
+    Font google26 = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 26);
 
     if (argc > 1)
     {

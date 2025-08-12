@@ -86,11 +86,11 @@ void *bundle_load_resource(const char *file_path, size_t *size)
     }
     return NULL;
 }
-Font bundle_load_font(const char *file_path)
+Font bundle_load_font(const char *file_path, int font_size)
 {
     size_t data_size;
     void *data = bundle_load_resource(file_path, &data_size);
-    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, FONT_SIZE, NULL, 0);
+    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, font_size, NULL, 0);
     return output;
 }
 Texture bundle_load_texture(const char *file_path)
@@ -143,7 +143,7 @@ int player_init(char *filename)
     SetWindowTitle(ps.file_title);
     ps.is_playing = true;
 
-    google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf");
+    google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", FONT_SIZE);
     playTexture = bundle_load_texture("./assets/icons/play.png");
     pauseTexture = bundle_load_texture("./assets/icons/pause.png");
     ffTexture = bundle_load_texture("./assets/icons/ff.png");
