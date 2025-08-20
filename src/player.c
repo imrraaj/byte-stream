@@ -90,7 +90,17 @@ Font bundle_load_font(const char *file_path, int font_size)
 {
     size_t data_size;
     void *data = bundle_load_resource(file_path, &data_size);
-    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, font_size, NULL, 0);
+    
+    // Load with more characters for better coverage
+    int codepoint_count = 95; // ASCII printable characters
+    int *codepoints = LoadCodepoints(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~", &codepoint_count);
+    
+    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, font_size, codepoints, codepoint_count);
+    
+    // Apply anti-aliasing and filtering for crisp text
+    SetTextureFilter(output.texture, TEXTURE_FILTER_BILINEAR);
+    
+    UnloadCodepoints(codepoints);
     return output;
 }
 Texture bundle_load_texture(const char *file_path)
