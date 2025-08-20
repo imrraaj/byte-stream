@@ -4,3 +4,4 @@ videos/
 compile_commands.json
 generator
 include/bundle.h
+.DS_Store
