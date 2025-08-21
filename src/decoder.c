@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 #include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
@@ -25,7 +26,7 @@ static int num_audio_streams = 0;
 static int indices_index = 0;
 
 static int sub_indices[100];
-static int sub_num_audio_streams = 0;
+static int sub_num_subtitle_streams = 0;
 static int sub_indices_index = 0;
 
 static double playback_start_time = 0.0;
@@ -46,7 +47,8 @@ void pause_decoder(void)
 }
 void resume_decoder(void)
 {
-    if (pause_time > 0) {
+    if (pause_time > 0)
+    {
         playback_start_time = GetTime() - pause_time;
     }
     pause_time = 0.0;
@@ -60,13 +62,16 @@ void reset_sync_state(void)
     first_frame_pts = 0.0;
     pause_time = 0.0;
     audio_clock = 0.0;
+    clear_subtitle_queue();
 }
 
 int decoder_decode_frame(void)
 {
     int read_bytes = av_read_frame(ds.format_ctx, ds.packet);
-    if (read_bytes < 0) {
-        if (read_bytes == AVERROR_EOF) {
+    if (read_bytes < 0)
+    {
+        if (read_bytes == AVERROR_EOF)
+        {
             // End of stream reached
             return -2;
         }
@@ -88,7 +93,7 @@ int decoder_decode_frame(void)
             while (avcodec_receive_frame(ds.audio_codec_ctx, original_audio_frame) == 0)
             {
                 swr_convert_frame(ds.swr_ctx, resampled_frame, original_audio_frame);
-                
+
                 pthread_mutex_lock(&ds.queue_mutex);
                 double pts_seconds = original_audio_frame->pts * av_q2d(ds.audio_stream->time_base);
                 audio_clock = pts_seconds + (double)resampled_frame->nb_samples / ds.audio_codec_ctx->sample_rate;
@@ -105,26 +110,46 @@ int decoder_decode_frame(void)
         queue_push(ds.video_queue, video_pkt);
         pthread_mutex_unlock(&ds.queue_mutex);
     }
-    else if (ds.packet->stream_index == ds.subtitle_stream_idx)
+    else if (ds.packet->stream_index == ds.subtitle_stream_idx && ds.subtitle_codec_ctx)
     {
         AVSubtitle sub;
         int got_frame = 0;
         if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
         {
+            // Convert subtitle PTS to video timebase for proper sync
+            // Convert subtitle PTS to video stream's timebase
+            int64_t subtitle_pts_video_timebase = av_rescale_q(ds.packet->pts, 
+                                                             ds.subtitle_stream->time_base, 
+                                                             ds.video_stream->time_base);
+            double start_time = subtitle_pts_video_timebase * av_q2d(ds.video_stream->time_base);
+            
+            printf("Subtitle PTS: %ld -> %ld (video timebase) = %.3fs, frame_time: %.3fs\n", 
+                   ds.packet->pts, subtitle_pts_video_timebase, start_time, (double)frame_time);
+            
+            // Simple duration logic: use end_display_time if available, otherwise default
+            double duration = (sub.end_display_time > 0) ? 
+                             (sub.end_display_time / 1000.0) : 
+                             4.0; // 4 second default duration
+                             
+            double end_time = start_time + duration;
+            
             for (size_t i = 0; i < sub.num_rects; i++)
             {
-                // Subtitle timing handled by display duration
-                if (sub.rects[i]->type == SUBTITLE_TEXT)
+                if (sub.rects[i]->type == SUBTITLE_TEXT && sub.rects[i]->text)
                 {
-                    printf("Subtitle (Text): %s\n", sub.rects[i]->text);
-                    ds.current_subtitle = sub.rects[i]->text;
+                    add_subtitle(sub.rects[i]->text, start_time, end_time);
+                    printf("Subtitle (Text): %s [%.2f - %.2f] (duration: %.2fs)\n", sub.rects[i]->text, start_time, end_time, duration);
                 }
-                else if (sub.rects[i]->type == SUBTITLE_ASS)
+                else if (sub.rects[i]->type == SUBTITLE_ASS && sub.rects[i]->ass)
                 {
-                    ds.current_subtitle = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
-                    printf("Subtitle (ASS): %s\n", sub.rects[i]->ass);
+                    char *cleaned = clean_subtitle(sub.rects[i]->ass, SUBTITLE_ASS);
+                    if (cleaned)
+                    {
+                        add_subtitle(cleaned, start_time, end_time);
+                        printf("Subtitle (ASS): %s [%.2f - %.2f] (duration: %.2fs)\n", cleaned, start_time, end_time, duration);
+                        free(cleaned);
+                    }
                 }
-                printf("Start Time: %u ms, End Time: %u ms\n", sub.start_display_time, sub.end_display_time);
             }
             avsubtitle_free(&sub);
         }
@@ -170,32 +195,32 @@ void *video_thread_func(void *arg)
             while (avcodec_receive_frame(ds.video_codec_ctx, video_frame) == 0)
             {
                 double pts_seconds = video_frame->pts * av_q2d(ds.video_stream->time_base);
-                
+
                 if (!sync_initialized)
                 {
                     playback_start_time = GetTime();
                     first_frame_pts = pts_seconds;
                     sync_initialized = true;
                 }
-                
+
                 double current_time = GetTime() - playback_start_time;
                 double video_time = pts_seconds - first_frame_pts;
-                
+
                 pthread_mutex_lock(&ds.queue_mutex);
                 double audio_time = audio_clock - first_frame_pts;
                 pthread_mutex_unlock(&ds.queue_mutex);
-                
+
                 // Calculate proper frame delay based on frame rate
                 double frame_rate = av_q2d(ds.video_stream->r_frame_rate);
                 double frame_delay = 1.0 / frame_rate;
-                
+
                 // Simple and stable audio-video synchronization
                 double sync_threshold = 0.1; // 100ms threshold - more tolerant
                 double av_diff = video_time - audio_time;
-                
+
                 // Calculate target delay based on video timing
                 double target_delay = video_time - current_time;
-                
+
                 // Apply gentle correction based on audio-video difference
                 if (av_diff > sync_threshold)
                 {
@@ -207,7 +232,7 @@ void *video_thread_func(void *arg)
                     // Audio is ahead - reduce delay slightly
                     target_delay *= 0.8;
                 }
-                
+
                 // Apply the delay with reasonable bounds
                 if (target_delay > 0 && target_delay < 0.2)
                 {
@@ -260,11 +285,12 @@ int decoder_init(char *filename)
         }
         else if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
         {
-            sub_indices[sub_num_audio_streams++] = i;
+            sub_indices[sub_num_subtitle_streams++] = i;
         }
     }
     ds.video_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     ds.audio_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    ds.subtitle_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_SUBTITLE, -1, -1, NULL, 0);
 
     for (int i = 0; i < num_audio_streams; i++)
     {
@@ -275,8 +301,18 @@ int decoder_init(char *filename)
         }
     }
 
+    for (int i = 0; i < sub_num_subtitle_streams; i++)
+    {
+        if (sub_indices[i] == ds.subtitle_stream_idx)
+        {
+            sub_indices_index = i;
+            break;
+        }
+    }
+
     printf("Video stream index: %d\n", ds.video_stream_idx);
     printf("Audio stream index: %d\n", ds.audio_stream_idx);
+    printf("Subtitle stream index: %d\n", ds.subtitle_stream_idx);
     printf("Indices index: %d\n", indices_index);
     if (ds.video_stream_idx < 0)
     {
@@ -291,8 +327,15 @@ int decoder_init(char *filename)
 
     ds.video_stream = ds.format_ctx->streams[ds.video_stream_idx];
     ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
+    if (ds.subtitle_stream_idx >= 0) {
+        ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
+    }
     const AVCodec *video_codec = avcodec_find_decoder(ds.video_stream->codecpar->codec_id);
     const AVCodec *audio_codec = avcodec_find_decoder(ds.audio_stream->codecpar->codec_id);
+    const AVCodec *subtitle_codec = NULL;
+    if (ds.subtitle_stream_idx >= 0) {
+        subtitle_codec = avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id);
+    }
     if (!video_codec)
     {
         fprintf(stderr, "ERROR: Could not find video codec\n");
@@ -306,6 +349,9 @@ int decoder_init(char *filename)
 
     ds.video_codec_ctx = avcodec_alloc_context3(video_codec);
     ds.audio_codec_ctx = avcodec_alloc_context3(audio_codec);
+    if (subtitle_codec) {
+        ds.subtitle_codec_ctx = avcodec_alloc_context3(subtitle_codec);
+    }
     if (!ds.video_codec_ctx)
     {
         fprintf(stderr, "ERROR: Could not allocate video codec context\n");
@@ -327,6 +373,11 @@ int decoder_init(char *filename)
         fprintf(stderr, "ERROR: Could not set audio codec parameters\n");
         return -1;
     }
+    if (ds.subtitle_codec_ctx && avcodec_parameters_to_context(ds.subtitle_codec_ctx, ds.subtitle_stream->codecpar) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not set subtitle codec parameters\n");
+        return -1;
+    }
 
     if (avcodec_open2(ds.video_codec_ctx, video_codec, NULL) < 0)
     {
@@ -336,6 +387,11 @@ int decoder_init(char *filename)
     if (avcodec_open2(ds.audio_codec_ctx, audio_codec, NULL) < 0)
     {
         fprintf(stderr, "ERROR: Could not open audio codec\n");
+        return -1;
+    }
+    if (ds.subtitle_codec_ctx && avcodec_open2(ds.subtitle_codec_ctx, subtitle_codec, NULL) < 0)
+    {
+        fprintf(stderr, "ERROR: Could not open subtitle codec\n");
         return -1;
     }
 
@@ -377,6 +433,14 @@ int decoder_init(char *filename)
     memset(ds.rgba_frame_buffer, 0, ds.video_codec_ctx->width * ds.video_codec_ctx->height * 4);
     ds.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_S16, 2, FIFO_MIN_FRAMES * 2);
     ds.selected_subtitle_stream_idx = -1;
+    ds.current_subtitle = malloc(1024);
+    if (ds.current_subtitle) {
+        ds.current_subtitle[0] = '\0';
+    }
+    ds.subtitle_start_time = -1.0;
+    ds.subtitle_end_time = -1.0;
+    ds.subtitle_queue = NULL;
+    pthread_mutex_init(&ds.subtitle_mutex, NULL);
 
     ds.video_queue = queue_init();
     if (!ds.video_queue)
@@ -397,66 +461,85 @@ void decoder_stop(void)
 {
     // Signal threads to stop
     ds.decoding = false;
-    
+
     // Ensure threads aren't stuck in pause - unlock if locked
-    if (pthread_mutex_trylock(&ds.pause_mutex) != 0) {
+    if (pthread_mutex_trylock(&ds.pause_mutex) != 0)
+    {
         pthread_mutex_unlock(&ds.pause_mutex);
     }
     pthread_mutex_unlock(&ds.pause_mutex);
-    
+
     // Wait for threads to finish gracefully
     pthread_join(ds.decode_thread, NULL);
     pthread_join(ds.video_thread, NULL);
-    
+
     // Clean up mutexes
     pthread_mutex_destroy(&ds.queue_mutex);
     pthread_mutex_destroy(&ds.texture_mutex);
     pthread_mutex_destroy(&ds.pause_mutex);
 
     // Clean up queues safely
-    if (ds.video_queue) {
+    if (ds.video_queue)
+    {
         queue_free(ds.video_queue);
         ds.video_queue = NULL;
     }
-    if (ds.audio_queue) {
+    if (ds.audio_queue)
+    {
         queue_free(ds.audio_queue);
         ds.audio_queue = NULL;
     }
 
     // Clean up FFmpeg resources safely
-    if (ds.packet) {
+    if (ds.packet)
+    {
         av_packet_free(&ds.packet);
         ds.packet = NULL;
     }
-    if (ds.video_codec_ctx) {
+    if (ds.video_codec_ctx)
+    {
         avcodec_free_context(&ds.video_codec_ctx);
         ds.video_codec_ctx = NULL;
     }
-    if (ds.audio_codec_ctx) {
+    if (ds.audio_codec_ctx)
+    {
         avcodec_free_context(&ds.audio_codec_ctx);
         ds.audio_codec_ctx = NULL;
     }
-    if (ds.subtitle_codec_ctx) {
+    if (ds.subtitle_codec_ctx)
+    {
         avcodec_free_context(&ds.subtitle_codec_ctx);
         ds.subtitle_codec_ctx = NULL;
     }
-    if (ds.sws_ctx) {
+    if (ds.sws_ctx)
+    {
         sws_freeContext(ds.sws_ctx);
         ds.sws_ctx = NULL;
     }
-    if (ds.swr_ctx) {
+    if (ds.swr_ctx)
+    {
         swr_free(&ds.swr_ctx);
         ds.swr_ctx = NULL;
     }
-    if (ds.fifo) {
+    if (ds.fifo)
+    {
         av_audio_fifo_free(ds.fifo);
         ds.fifo = NULL;
     }
-    if (ds.rgba_frame_buffer) {
+    if (ds.rgba_frame_buffer)
+    {
         free(ds.rgba_frame_buffer);
         ds.rgba_frame_buffer = NULL;
     }
-    if (ds.format_ctx) {
+    if (ds.current_subtitle)
+    {
+        free(ds.current_subtitle);
+        ds.current_subtitle = NULL;
+    }
+    clear_subtitle_queue();
+    pthread_mutex_destroy(&ds.subtitle_mutex);
+    if (ds.format_ctx)
+    {
         avformat_close_input(&ds.format_ctx);
         ds.format_ctx = NULL;
     }
@@ -522,7 +605,7 @@ int decoder_change_audio(char *language)
     avcodec_flush_buffers(ds.audio_codec_ctx);
     queue_clear(ds.video_queue);
     av_audio_fifo_reset(ds.fifo);
-    
+
     reset_sync_state();
 
     // ==========================================================
@@ -569,7 +652,15 @@ int decoder_change_subtitle(char *language)
     {
         avcodec_free_context(&ds.subtitle_codec_ctx);
     }
-    sub_indices_index = (sub_indices_index + 1) % sub_num_audio_streams;
+    clear_subtitle_queue();
+    if (sub_num_subtitle_streams > 0) {
+        sub_indices_index = (sub_indices_index + 1) % sub_num_subtitle_streams;
+    } else {
+        printf("No subtitle streams available.\n");
+        pthread_mutex_unlock(&ds.queue_mutex);
+        pthread_mutex_unlock(&ds.pause_mutex);
+        return -1;
+    }
     ds.subtitle_stream_idx = sub_indices[sub_indices_index];
     ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
 
@@ -610,4 +701,102 @@ int decoder_change_subtitle(char *language)
     pthread_mutex_unlock(&ds.pause_mutex);
     printf("Subtitle stream changed successfully.\n");
     return 0;
+}
+
+char *decoder_get_metadata(DecoderState *ds, char *key)
+{
+    while ((ds->tag = av_dict_get(ds->format_ctx->metadata, "", ds->tag, AV_DICT_IGNORE_SUFFIX)))
+    {
+        if (strcmp(ds->tag->key, key) == 0)
+        {
+            return ds->tag->value;
+        }
+    }
+    return "Untitled";
+}
+
+void add_subtitle(const char *text, double start_time, double end_time)
+{
+    SubtitleItem *new_item = malloc(sizeof(SubtitleItem));
+    if (!new_item) return;
+    
+    new_item->text = strdup(text);
+    new_item->start_time = start_time;
+    new_item->end_time = end_time;
+    new_item->next = NULL;
+    
+    pthread_mutex_lock(&ds.subtitle_mutex);
+    
+    if (!ds.subtitle_queue) {
+        ds.subtitle_queue = new_item;
+    } else {
+        // Insert in chronological order
+        SubtitleItem *current = ds.subtitle_queue;
+        SubtitleItem *prev = NULL;
+        
+        while (current && current->start_time < start_time) {
+            prev = current;
+            current = current->next;
+        }
+        
+        if (prev) {
+            prev->next = new_item;
+            new_item->next = current;
+        } else {
+            new_item->next = ds.subtitle_queue;
+            ds.subtitle_queue = new_item;
+        }
+    }
+    
+    pthread_mutex_unlock(&ds.subtitle_mutex);
+}
+
+const char *get_current_subtitle(double current_time)
+{
+    pthread_mutex_lock(&ds.subtitle_mutex);
+    
+    SubtitleItem *current = ds.subtitle_queue;
+    static double last_debug_time = 0;
+    
+    // Debug output every 2 seconds to avoid spam
+    if (current_time - last_debug_time > 2.0) {
+        printf("Checking subtitles at time %.3f:\n", current_time);
+        SubtitleItem *debug_item = current;
+        int count = 0;
+        while (debug_item && count < 3) {
+            printf("  Subtitle %d: [%.3f - %.3f] %s\n", count, 
+                   debug_item->start_time, debug_item->end_time, 
+                   debug_item->text ? debug_item->text : "NULL");
+            debug_item = debug_item->next;
+            count++;
+        }
+        last_debug_time = current_time;
+    }
+    
+    while (current) {
+        if (current_time >= current->start_time && current_time <= current->end_time) {
+            pthread_mutex_unlock(&ds.subtitle_mutex);
+            return current->text;
+        }
+        current = current->next;
+    }
+    
+    pthread_mutex_unlock(&ds.subtitle_mutex);
+    return NULL;
+}
+
+void clear_subtitle_queue(void)
+{
+    pthread_mutex_lock(&ds.subtitle_mutex);
+    
+    SubtitleItem *current = ds.subtitle_queue;
+    while (current) {
+        SubtitleItem *next = current->next;
+        free(current->text);
+        free(current);
+        current = next;
+    }
+    ds.subtitle_queue = NULL;
+    
+    pthread_mutex_unlock(&ds.subtitle_mutex);
 }

@@ -3,18 +3,23 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "bundle.h"
+#include "application.h"
 #include <math.h>
 #include <stdio.h>
 
 #define FONT_SIZE 36
 #define ICON_SIZE 32 / 1.25
 #define BUTTON_RADIUS ICON_SIZE * 1.5f
-
 #define MIN_VOLUME_ALLOWED 0
 #define MAX_VOLUME_ALLOWED 500
+typedef struct
+{
+    Shader *shaders;
+    int count;
+    int capacity;
+} ShaderArray;
 
 PlayerState ps = {0};
-Font google;
 Texture2D playTexture;
 Texture2D pauseTexture;
 Texture2D ffTexture;
@@ -28,14 +33,6 @@ char subtitle_language[512];
 static float lastClickTime = 0.0f;              // Time of the last click
 static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
 static bool show_help_menu = false;             // Help menu visibility
-
-typedef struct
-{
-    Shader *shaders;
-    int shaderCount;
-    int capacity;
-} ShaderArray;
-
 ShaderArray shaderArray = {0};
 
 char *get_file_title(DecoderState *ds)
@@ -57,7 +54,6 @@ void audio_callback(void *buffer, unsigned int frames)
         memset(buffer, 0, frames * sizeof(float) * 2);
         return;
     }
-    
     pthread_mutex_lock(&ds.queue_mutex);
     if (av_audio_fifo_size(ds.fifo) >= (int)frames)
     {
@@ -72,44 +68,6 @@ void audio_callback(void *buffer, unsigned int frames)
         memset(buffer, 0, frames * sizeof(float) * 2);
     }
     pthread_mutex_unlock(&ds.queue_mutex);
-}
-
-void *bundle_load_resource(const char *file_path, size_t *size)
-{
-    for (size_t i = 0; i < resources_count; ++i)
-    {
-        if (strcmp(resources[i].file_path, file_path) == 0)
-        {
-            *size = resources[i].size;
-            return &bundle[resources[i].offset];
-        }
-    }
-    return NULL;
-}
-Font bundle_load_font(const char *file_path, int font_size)
-{
-    size_t data_size;
-    void *data = bundle_load_resource(file_path, &data_size);
-    
-    // Load with more characters for better coverage
-    int codepoint_count = 95; // ASCII printable characters
-    int *codepoints = LoadCodepoints(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~", &codepoint_count);
-    
-    Font output = LoadFontFromMemory(GetFileExtension(file_path), data, data_size, font_size, codepoints, codepoint_count);
-    
-    // Apply anti-aliasing and filtering for crisp text
-    SetTextureFilter(output.texture, TEXTURE_FILTER_BILINEAR);
-    
-    UnloadCodepoints(codepoints);
-    return output;
-}
-Texture bundle_load_texture(const char *file_path)
-{
-    size_t data_size;
-    void *data = bundle_load_resource(file_path, &data_size);
-    Image image = LoadImageFromMemory(GetFileExtension(file_path), data, data_size);
-    Texture output = LoadTextureFromImage(image);
-    return output;
 }
 
 int GetDisplayWidth(void)
@@ -138,22 +96,13 @@ int player_init(char *filename)
                 filename);
         return -1;
     }
-
-    // SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-    // InitWindow(800, 600, ps.file_title);
-    // SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
-    SetWindowPosition(0, 0);
-    ps.file_title = get_file_title(&ds);
-
-    printf("---------------------------------------------\n");
-    printf("File: %s\n", filename);
-    printf("Title: %s\n", ps.file_title);
-    printf("---------------------------------------------\n");
-
+    ps.file_title = decoder_get_metadata(&ds, "title");
+    if (!ps.file_title || strlen(ps.file_title) == 0)
+        ps.file_title = "Untitled";
     SetWindowTitle(ps.file_title);
     ps.is_playing = true;
 
-    google = bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", FONT_SIZE);
+    ps.volume = 100.0f;
     playTexture = bundle_load_texture("./assets/icons/play.png");
     pauseTexture = bundle_load_texture("./assets/icons/pause.png");
     ffTexture = bundle_load_texture("./assets/icons/ff.png");
@@ -175,20 +124,20 @@ int player_init(char *filename)
 
     shaderArray.capacity = 4;
     shaderArray.shaders = malloc(shaderArray.capacity * sizeof(Shader));
-    shaderArray.shaderCount = 0;
+    shaderArray.count = 0;
     return 0;
 }
 
 void add_shader(const char *shaderFile)
 {
-    if (shaderArray.shaderCount >= shaderArray.capacity)
+    if (shaderArray.count >= shaderArray.capacity)
     {
         shaderArray.capacity *= 2;
         shaderArray.shaders =
             realloc(shaderArray.shaders, shaderArray.capacity * sizeof(Shader));
     }
     Shader newShader = LoadShader(0, shaderFile);
-    shaderArray.shaders[shaderArray.shaderCount++] = newShader;
+    shaderArray.shaders[shaderArray.count++] = newShader;
 }
 
 MouseButtonPressedTimes DetectMouseButtonDoublePressed(int button)
@@ -268,7 +217,7 @@ void player_update(void)
         TogglePause();
         last_hover_time = GetTime();
     }
-    
+
     // Toggle help menu with ? key (question mark key)
     if (IsKeyPressed(KEY_SLASH) && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)))
     {
@@ -283,8 +232,10 @@ void player_update(void)
     to_timestamp(elapsed_text, frame_time);
     to_timestamp(total_text, (int)total_runtime);
 
-    Vector2 totalTimeSize = MeasureTextEx(google, total_text, FONT_SIZE / 2, 0);
-    Vector2 videoTitleSize = MeasureTextEx(google, ps.file_title, 36, 0);
+    Font time_font = get_best_font(app.fonts, FONT_SIZE / 2);
+    Font title_font = get_best_font(app.fonts, 36);
+    Vector2 totalTimeSize = MeasureTextEx(time_font, total_text, FONT_SIZE / 2, 0);
+    Vector2 videoTitleSize = MeasureTextEx(title_font, ps.file_title, 36, 0);
     float availableWidth = setting.width * 0.95f;
 
     float starting_left_x = setting.width - availableWidth;
@@ -356,7 +307,7 @@ void player_update(void)
         avcodec_flush_buffers(ds.audio_codec_ctx);
         queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
-        
+
         reset_sync_state();
 
         frame_time = seek_time;
@@ -384,7 +335,7 @@ void player_update(void)
         avcodec_flush_buffers(ds.audio_codec_ctx);
         queue_clear(ds.video_queue);
         av_audio_fifo_reset(ds.fifo);
-        
+
         reset_sync_state();
 
         frame_time = seek_time;
@@ -417,9 +368,9 @@ void player_update(void)
             avcodec_flush_buffers(ds.audio_codec_ctx);
             queue_clear(ds.video_queue);
             av_audio_fifo_reset(ds.fifo);
-            
+
             reset_sync_state();
-            
+
             frame_time = seekTime;
         }
         else
@@ -445,19 +396,19 @@ void player_update(void)
 
     if (IsKeyPressed(KEY_U))
     {
-        for (int i = 0; i < shaderArray.shaderCount; i++)
+        for (int i = 0; i < shaderArray.count; i++)
         {
             UnloadShader(shaderArray.shaders[i]);
         }
-        shaderArray.shaderCount = 0;
+        shaderArray.count = 0;
     }
 
     BeginDrawing();
     ClearBackground(BLACK);
-    if (shaderArray.shaderCount > 0)
+    if (shaderArray.count > 0)
     {
         BeginShaderMode(shaderArray.shaders[0]); // Start with first shader
-        for (int i = 1; i < shaderArray.shaderCount; i++)
+        for (int i = 1; i < shaderArray.count; i++)
         {
             BeginShaderMode(shaderArray.shaders[i]); // Stack additional shaders
         }
@@ -470,7 +421,7 @@ void player_update(void)
                                (float)ds.video_codec_ctx->height},
                    dest_rect, Vector2Zero(), 0, WHITE);
 
-    for (int i = 0; i < shaderArray.shaderCount; i++)
+    for (int i = 0; i < shaderArray.count; i++)
     {
         EndShaderMode();
     }
@@ -487,9 +438,12 @@ void player_update(void)
         DrawCircleSector((Vector2){seekBar.x, seekBar.y + seekBar.height / 2}, seekBar.height / 2, 90, 270, 50, Fade(DARKBLUE, alpha));
         DrawCircleSector((Vector2){seekBar.x + seekBar.width, seekBar.y + seekBar.height / 2}, seekBar.height / 2, 270, 360 + 90, 50, Fade(GetColor(0xB7B7B7FF), alpha));
 
-        DrawTextEx(google, elapsed_text, elapsedTimePos, FONT_SIZE / 1.5, 0, Fade(RAYWHITE, alpha));
-        DrawTextEx(google, total_text, totalTimePos, FONT_SIZE / 1.5, 0, Fade(RAYWHITE, alpha));
-        DrawTextEx(google, ps.file_title, videoTitlePos, FONT_SIZE, 0, Fade(RAYWHITE, alpha));
+        Font elapsed_font = get_best_font(app.fonts, FONT_SIZE / 1.5);
+        Font total_font = get_best_font(app.fonts, FONT_SIZE / 1.5);
+        Font file_title_font = get_best_font(app.fonts, FONT_SIZE);
+        DrawTextEx(elapsed_font, elapsed_text, elapsedTimePos, FONT_SIZE / 1.5, 0, Fade(RAYWHITE, alpha));
+        DrawTextEx(total_font, total_text, totalTimePos, FONT_SIZE / 1.5, 0, Fade(RAYWHITE, alpha));
+        DrawTextEx(file_title_font, ps.file_title, videoTitlePos, FONT_SIZE, 0, Fade(RAYWHITE, alpha));
 
         // DrawCircleV((Vector2){screenWidth / 2, screenHeight / 2}, 48, Fade(RAYWHITE, alpha));
 
@@ -518,41 +472,51 @@ void player_update(void)
             vol_height,
             ORANGE);
         DrawRectangleRec(vol_inner_rect, Fade(ORANGE, 0.8f));
-        Vector2 textSize = MeasureTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
+        Font volume_font = get_best_font(app.fonts, FONT_SIZE);
+        Vector2 textSize = MeasureTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(google, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
+        DrawTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
     }
 
     if (GetTime() - last_audio_change_time < 3.0f)
     {
-        Vector2 textSize = MeasureTextEx(google, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
+        Font audio_font = get_best_font(app.fonts, FONT_SIZE);
+        Vector2 textSize = MeasureTextEx(audio_font, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(google, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, RAYWHITE);
+        DrawTextEx(audio_font, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, RAYWHITE);
     }
     if (GetTime() - last_subtitle_change_time < 3.0f)
     {
-        Vector2 textSize = MeasureTextEx(google, TextFormat("Subtitle: %s", subtitle_language), FONT_SIZE, 0);
+        Font subtitle_font = get_best_font(app.fonts, FONT_SIZE);
+        Vector2 textSize = MeasureTextEx(subtitle_font, TextFormat("Subtitle: %s", subtitle_language), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(google, TextFormat("Subtitle: %s", subtitle_language), textPos, FONT_SIZE, 0, RAYWHITE);
+        DrawTextEx(subtitle_font, TextFormat("Subtitle: %s", subtitle_language), textPos, FONT_SIZE, 0, RAYWHITE);
     }
 
-    Vector2 a = MeasureTextEx(google, ds.current_subtitle, FONT_SIZE * 1.25, 0);
-    DrawTextEx(google, ds.current_subtitle,
-               (Vector2){screenWidth / 2 - a.x / 2, screenHeight - settingHeight + settingHeight * 0.15f},
-               FONT_SIZE * 1.25, 0, WHITE);
+    // Display subtitle if one should be visible at current time
+    const char *current_subtitle = get_current_subtitle((double)frame_time);
+    if (current_subtitle && current_subtitle[0] != '\0')
+    {
+        Font current_subtitle_font = get_best_font(app.fonts, FONT_SIZE * 1.25);
+        Vector2 a = MeasureTextEx(current_subtitle_font, current_subtitle, FONT_SIZE * 1.25, 0);
+        DrawTextEx(current_subtitle_font, current_subtitle,
+                   (Vector2){screenWidth / 2 - a.x / 2, screenHeight - settingHeight + settingHeight * 0.15f},
+                   FONT_SIZE * 1.25, 0, WHITE);
+    }
 
     // Draw help menu if visible
     if (show_help_menu)
     {
         // Semi-transparent overlay background
         DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.8f));
-        
+
         // Help menu title
         const char *title = "KEYBOARD CONTROLS";
-        Vector2 titleSize = MeasureTextEx(google, title, FONT_SIZE * 1.5, 0);
+        Font help_title_font = get_best_font(app.fonts, FONT_SIZE * 1.5);
+        Vector2 titleSize = MeasureTextEx(help_title_font, title, FONT_SIZE * 1.5, 0);
         Vector2 titlePos = {screenWidth / 2 - titleSize.x / 2, 50};
-        DrawTextEx(google, title, titlePos, FONT_SIZE * 1.5, 0, WHITE);
-        
+        DrawTextEx(help_title_font, title, titlePos, FONT_SIZE * 1.5, 0, WHITE);
+
         // Help menu content
         const char *help_text[] = {
             "SPACE           - Play/Pause",
@@ -569,36 +533,37 @@ void player_update(void)
             "MOUSE CONTROLS:",
             "Click Seekbar   - Seek to Position",
             "Click Video     - Play/Pause",
-            "Drag & Drop     - Load Shader (.fs files)"
-        };
-        
+            "Drag & Drop     - Load Shader (.fs files)"};
+
         int help_lines = sizeof(help_text) / sizeof(help_text[0]);
         float line_height = FONT_SIZE * 0.8f + 5;
         float start_y = titlePos.y + titleSize.y + 40;
-        
+
+        Font help_content_font = get_best_font(app.fonts, FONT_SIZE * 0.8f);
         for (int i = 0; i < help_lines; i++)
         {
             Vector2 pos = {100, start_y + i * line_height};
-            Color text_color = (strlen(help_text[i]) == 0) ? BLANK : 
-                              (strstr(help_text[i], "MOUSE CONTROLS") != NULL) ? YELLOW : WHITE;
+            Color text_color = (strlen(help_text[i]) == 0) ? BLANK : (strstr(help_text[i], "MOUSE CONTROLS") != NULL) ? YELLOW
+                                                                                                                      : WHITE;
             if (text_color.a > 0)
-                DrawTextEx(google, help_text[i], pos, FONT_SIZE * 0.8f, 0, text_color);
+                DrawTextEx(help_content_font, help_text[i], pos, FONT_SIZE * 0.8f, 0, text_color);
         }
-        
+
         // Instructions at bottom
         const char *close_text = "Press ? again to close this menu";
-        Vector2 closeSize = MeasureTextEx(google, close_text, FONT_SIZE * 0.7f, 0);
+        Font help_close_font = get_best_font(app.fonts, FONT_SIZE * 0.7f);
+        Vector2 closeSize = MeasureTextEx(help_close_font, close_text, FONT_SIZE * 0.7f, 0);
         Vector2 closePos = {screenWidth / 2 - closeSize.x / 2, screenHeight - 50};
-        DrawTextEx(google, close_text, closePos, FONT_SIZE * 0.7f, 0, GRAY);
+        DrawTextEx(help_close_font, close_text, closePos, FONT_SIZE * 0.7f, 0, GRAY);
     }
-    
+
     EndDrawing();
 }
 
 void player_close(void)
 {
     decoder_stop();
-    for (int i = 0; i < shaderArray.shaderCount; i++)
+    for (int i = 0; i < shaderArray.count; i++)
     {
         UnloadShader(shaderArray.shaders[i]);
     }
@@ -607,12 +572,8 @@ void player_close(void)
     UnloadTexture(ps.texture);
     UnloadAudioStream(ps.raylib_audio_stream);
     CloseAudioDevice();
-
-    UnloadFont(google);
     UnloadTexture(playTexture);
     UnloadTexture(pauseTexture);
     UnloadTexture(ffTexture);
     UnloadTexture(bbTexture);
-
-    CloseWindow();
 }

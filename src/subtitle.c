@@ -1,5 +1,7 @@
 #include "subtitle.h"
 #include <libavcodec/avcodec.h>
+#include <string.h>
+#include <stdlib.h>
 
 char *clean_ass_subtitle(const char *line)
 {

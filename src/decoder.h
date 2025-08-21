@@ -15,6 +15,13 @@
 
 #include "queue.h"
 
+typedef struct SubtitleItem {
+    char *text;
+    double start_time;
+    double end_time;
+    struct SubtitleItem *next;
+} SubtitleItem;
+
 struct DecoderState {
   AVFormatContext *format_ctx;
   AVCodecContext *video_codec_ctx;
@@ -35,6 +42,10 @@ struct DecoderState {
 
   uint8_t *rgba_frame_buffer;
   char *current_subtitle;
+  double subtitle_start_time;
+  double subtitle_end_time;
+  SubtitleItem *subtitle_queue;
+  pthread_mutex_t subtitle_mutex;
 
   struct Queue *audio_queue;
   struct Queue *video_queue;
@@ -61,9 +72,12 @@ int decoder_change_subtitle(char *language);
 void decoder_stop(void);
 void *decode_thread_func(void *arg);
 void *video_thread_func(void *arg);
-
+char *decoder_get_metadata(DecoderState *ds, char *key);
 void pause_decoder(void);
 void resume_decoder(void);
 void reset_sync_state(void);
+void add_subtitle(const char *text, double start_time, double end_time);
+const char *get_current_subtitle(double current_time);
+void clear_subtitle_queue(void);
 
 #endif // DECODER_H

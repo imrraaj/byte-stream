@@ -3,6 +3,9 @@
 
 #include "decoder.h"
 #include "raylib.h"
+#include "font.h"
+#include "application.h"
+#include "macros.h"
 
 struct PlayerState
 {
@@ -22,12 +25,10 @@ typedef enum
 typedef struct PlayerState PlayerState;
 extern PlayerState ps;
 extern int64_t frame_time;
+extern Application app;
 
 void audio_callback(void *buffer, unsigned int frames);
 int player_init(char *filename);
 void player_update(void);
 void player_close(void);
-Texture2D bundle_load_texture(const char *file_path);
-Font bundle_load_font(const char *file_path, int font_size);
-void *bundle_load_resource(const char *file_path, size_t *size);
 #endif // PLAYER_H

@@ -61,15 +61,15 @@ bool generate_resource_bundle(void)
   genf(out, "    size_t offset;");
   genf(out, "    size_t size;");
   genf(out, "} Resource;");
-  genf(out, "size_t resources_count = %zu;", NOB_ARRAY_LEN(resources));
-  genf(out, "Resource resources[] = {");
+  genf(out, "static size_t resources_count = %zu;", NOB_ARRAY_LEN(resources));
+  genf(out, "static Resource resources[] = {");
   for (size_t i = 0; i < NOB_ARRAY_LEN(resources); ++i) {
     genf(out, "    {.file_path = \"%s\", .offset = %zu, .size = %zu},",
          resources[i].file_path, resources[i].offset, resources[i].size);
   }
   genf(out, "};");
 
-  genf(out, "unsigned char bundle[] = {");
+  genf(out, "static unsigned char bundle[] = {");
   size_t row_size = 20;
     for (size_t i = 0; i < bundle.count; ) {
     fprintf(out, "     ");

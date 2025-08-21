@@ -1,7 +1,5 @@
 #ifndef QUEUE_H
 #define QUEUE_H
-
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -11,9 +9,6 @@
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
 #include <libswresample/swresample.h>
-
-#include "decoder.h"
-#include "player.h"
 
 typedef struct PacketQueue
 {

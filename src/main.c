@@ -1,54 +1,34 @@
 #include "decoder.h"
 #include "player.h"
+#include "application.h"
 #include "tinyfiledialogs.h"
 #include "raylib.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 
 #define BYTESTREAM_VERSION "0.1.0"
+
+Application app = {0};
 bool isFileSelected = false;
 char errorMsg[256] = {0};
-
-// Font management
-Font *get_best_font(Font *fonts, int *font_sizes, int count, int target_size) {
-    int best_idx = 0;
-    int smallest_diff = abs(font_sizes[0] - target_size);
-    
-    for (int i = 1; i < count; i++) {
-        int diff = abs(font_sizes[i] - target_size);
-        if (diff < smallest_diff) {
-            smallest_diff = diff;
-            best_idx = i;
-        }
-    }
-    return &fonts[best_idx];
-}
 
 int main(int argc, char **argv)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
-    InitWindow(800, 600, "Byte Stream Player");
+    InitWindow(800, 600, TextFormat("Bytestream - v%s", BYTESTREAM_VERSION));
+    SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
+    SetWindowPosition(0, 0);
+    SetExitKey(0);
     SetTargetFPS(60);
-    
-    // Enable text anti-aliasing
     SetTextLineSpacing(0);
 
     Texture2D logo_texture = bundle_load_texture("./assets/logos/bytestream-256.png");
     Image logo = LoadImageFromTexture(logo_texture);
     SetWindowIcon(logo);
 
-    // Load multiple font sizes for sharp rendering
-    Font fonts[8] = {
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 12),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 16),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 20),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 24),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 32),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 48),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 64),
-        bundle_load_font("./assets/fonts/CircularSpotifyText-Bold.otf", 72)
-    };
-    int font_sizes[] = {12, 16, 20, 24, 32, 48, 64, 72};
+    init_application(&app);
 
     if (argc > 1)
     {
@@ -77,10 +57,9 @@ int main(int argc, char **argv)
             int logoY = (screenHeight - logo_texture.height) / 2 - 80;
 
             char *select_text = "Byte Stream - v" BYTESTREAM_VERSION;
-            Font *title_font = get_best_font(fonts, font_sizes, 8, 48);
-            // Use exact font size, no scaling
             float title_size = 48.0f;
-            Vector2 textSize1 = MeasureTextEx(*title_font, select_text, title_size, 1.0f);
+            Font title_font = get_best_font(app.fonts, title_size);
+            Vector2 textSize1 = MeasureTextEx(title_font, select_text, title_size, 1.0f);
             Vector2 text1 = {(screenWidth - textSize1.x) / 2, logoY + logo_texture.height};
 
             Rectangle buttonRect = {
@@ -90,10 +69,30 @@ int main(int argc, char **argv)
                 40,
             };
 
-            Color buttonColor = DARKGRAY;
+            Color buttonColor = SECONDARY_BGCOLOR;
+            if (IsFileDropped())
+            {
+                FilePathList droppedFiles = LoadDroppedFiles();
+                for (size_t i = 0; i < droppedFiles.count; i++)
+                {
+                    if (GetFileExtension(droppedFiles.paths[i]))
+                    {
+                        if (player_init(droppedFiles.paths[i]) < 0)
+                        {
+                            snprintf(errorMsg, sizeof(errorMsg), "Failed to initialize player with file: %s", droppedFiles.paths[i]);
+                            break;
+                        }
+                        else
+                        {
+                            isFileSelected = true;
+                        }
+                    }
+                }
+                UnloadDroppedFiles(droppedFiles);
+            }
             if (CheckCollisionPointRec(GetMousePosition(), buttonRect))
             {
-                buttonColor = DARKGREEN;
+                buttonColor = ACCENT_COLOR;
                 SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
                 if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
                 {
@@ -107,7 +106,6 @@ int main(int argc, char **argv)
                         else
                         {
                             isFileSelected = true;
-                            errorMsg[0] = '\0';
                         }
                     }
                 }
@@ -118,25 +116,28 @@ int main(int argc, char **argv)
             }
 
             BeginDrawing();
-            ClearBackground(GetColor(0x181818FF));
+            ClearBackground(BACKGROUND_COLOR);
             DrawTexture(logo_texture, logoX, logoY, WHITE);
-            DrawTextEx(*title_font, select_text, text1, title_size, 1.0f, WHITE);
+            DrawTextEx(title_font, select_text, text1, title_size, 0.0f, WHITE);
+
+            float button_size = 32.0f;
+            Font button_font = get_best_font(app.fonts, button_size);
+            const char *buttonText = "Select Video";
+            Vector2 buttonTextSize = MeasureTextEx(button_font, buttonText, button_size, 0.0f);
+
             DrawRectangleRec(buttonRect, buttonColor);
-            Font *button_font = get_best_font(fonts, font_sizes, 8, 24);
-            float button_size = 24.0f;
-            Vector2 buttonTextSize = MeasureTextEx(*button_font, "Select Video", button_size, 1.0f);
-            DrawTextEx(*button_font, "Select Video",
+            DrawTextEx(button_font, buttonText,
                        (Vector2){
                            buttonRect.x + (buttonRect.width - buttonTextSize.x) / 2,
                            buttonRect.y + (buttonRect.height - buttonTextSize.y) / 2},
-                       button_size, 1.0f, WHITE);
+                       button_size, 0.0f, WHITE);
 
-            if (errorMsg[0] != '\0')
+            if (*errorMsg)
             {
-                Font *error_font = get_best_font(fonts, font_sizes, 8, 20);
+                Font error_font = get_best_font(app.fonts, 20);
                 float error_size = 20.0f;
-                Vector2 errorSize = MeasureTextEx(*error_font, errorMsg, error_size, 1.0f);
-                DrawTextEx(*error_font, errorMsg,
+                Vector2 errorSize = MeasureTextEx(error_font, errorMsg, error_size, 1.0f);
+                DrawTextEx(error_font, errorMsg,
                            (Vector2){
                                (screenWidth - errorSize.x) / 2,
                                buttonRect.y + buttonRect.height + padding},
@@ -149,5 +150,7 @@ int main(int argc, char **argv)
     UnloadImage(logo);
     if (isFileSelected)
         player_close();
+    cleanup_application(&app);
+    CloseWindow();
     return 0;
 }
