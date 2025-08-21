@@ -18,16 +18,31 @@
 
 #define FIFO_MIN_FRAMES 256 * 1024
 
+static void extract_stream_metadata(AVStream *stream, char *language, size_t lang_size)
+{
+    AVDictionaryEntry *tag = NULL;
+    char lang[256] = "unknown", title[256] = "";
+    
+    while ((tag = av_dict_get(stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX))) {
+        if (strcmp(tag->key, "language") == 0) {
+            strncpy(lang, tag->value, sizeof(lang) - 1);
+        } else if (strcmp(tag->key, "title") == 0) {
+            strncpy(title, tag->value, sizeof(title) - 1);
+        }
+    }
+    
+    if (title[0] != '\0') {
+        snprintf(language, lang_size, "%s - %s", title, lang);
+    } else {
+        snprintf(language, lang_size, "%s", lang);
+    }
+}
+
 DecoderState ds = {0};
 int64_t frame_time = 0;
 
-static int indices[100];
-static int num_audio_streams = 0;
-static int indices_index = 0;
-
-static int sub_indices[100];
-static int sub_num_subtitle_streams = 0;
-static int sub_indices_index = 0;
+static struct { int indices[100]; int count; int index; } audio_streams = {0};
+static struct { int indices[100]; int count; int index; } subtitle_streams = {0};
 
 static double playback_start_time = 0.0;
 static double first_frame_pts = 0.0;
@@ -35,7 +50,7 @@ static double pause_time = 0.0;
 static double audio_clock = 0.0;
 static bool sync_initialized = false;
 
-void check_pause(void)
+static inline void check_pause(void)
 {
     pthread_mutex_lock(&ds.pause_mutex);
     pthread_mutex_unlock(&ds.pause_mutex);
@@ -116,17 +131,11 @@ int decoder_decode_frame(void)
         int got_frame = 0;
         if (avcodec_decode_subtitle2(ds.subtitle_codec_ctx, &sub, &got_frame, ds.packet) >= 0 && got_frame)
         {
-            // Convert subtitle PTS to video timebase for proper sync
-            // Convert subtitle PTS to video stream's timebase
             int64_t subtitle_pts_video_timebase = av_rescale_q(ds.packet->pts, 
                                                              ds.subtitle_stream->time_base, 
                                                              ds.video_stream->time_base);
             double start_time = subtitle_pts_video_timebase * av_q2d(ds.video_stream->time_base);
-            
-            printf("Subtitle PTS: %ld -> %ld (video timebase) = %.3fs, frame_time: %.3fs\n", 
-                   ds.packet->pts, subtitle_pts_video_timebase, start_time, (double)frame_time);
-            
-            // Simple duration logic: use end_display_time if available, otherwise default
+
             double duration = (sub.end_display_time > 0) ? 
                              (sub.end_display_time / 1000.0) : 
                              4.0; // 4 second default duration
@@ -138,7 +147,6 @@ int decoder_decode_frame(void)
                 if (sub.rects[i]->type == SUBTITLE_TEXT && sub.rects[i]->text)
                 {
                     add_subtitle(sub.rects[i]->text, start_time, end_time);
-                    printf("Subtitle (Text): %s [%.2f - %.2f] (duration: %.2fs)\n", sub.rects[i]->text, start_time, end_time, duration);
                 }
                 else if (sub.rects[i]->type == SUBTITLE_ASS && sub.rects[i]->ass)
                 {
@@ -146,7 +154,6 @@ int decoder_decode_frame(void)
                     if (cleaned)
                     {
                         add_subtitle(cleaned, start_time, end_time);
-                        printf("Subtitle (ASS): %s [%.2f - %.2f] (duration: %.2fs)\n", cleaned, start_time, end_time, duration);
                         free(cleaned);
                     }
                 }
@@ -278,42 +285,31 @@ int decoder_init(char *filename)
 
     for (unsigned int i = 0; i < ds.format_ctx->nb_streams; i++)
     {
-        if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
-        {
-            indices[num_audio_streams] = i;
-            num_audio_streams++;
-        }
-        else if (ds.format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
-        {
-            sub_indices[sub_num_subtitle_streams++] = i;
+        enum AVMediaType type = ds.format_ctx->streams[i]->codecpar->codec_type;
+        if (type == AVMEDIA_TYPE_AUDIO) {
+            audio_streams.indices[audio_streams.count++] = i;
+        } else if (type == AVMEDIA_TYPE_SUBTITLE) {
+            subtitle_streams.indices[subtitle_streams.count++] = i;
         }
     }
     ds.video_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     ds.audio_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     ds.subtitle_stream_idx = av_find_best_stream(ds.format_ctx, AVMEDIA_TYPE_SUBTITLE, -1, -1, NULL, 0);
 
-    for (int i = 0; i < num_audio_streams; i++)
-    {
-        if (indices[i] == ds.audio_stream_idx)
-        {
-            indices_index = i;
+    for (int i = 0; i < audio_streams.count; i++) {
+        if (audio_streams.indices[i] == ds.audio_stream_idx) {
+            audio_streams.index = i;
+            break;
+        }
+    }
+    for (int i = 0; i < subtitle_streams.count; i++) {
+        if (subtitle_streams.indices[i] == ds.subtitle_stream_idx) {
+            subtitle_streams.index = i;
             break;
         }
     }
 
-    for (int i = 0; i < sub_num_subtitle_streams; i++)
-    {
-        if (sub_indices[i] == ds.subtitle_stream_idx)
-        {
-            sub_indices_index = i;
-            break;
-        }
-    }
-
-    printf("Video stream index: %d\n", ds.video_stream_idx);
-    printf("Audio stream index: %d\n", ds.audio_stream_idx);
-    printf("Subtitle stream index: %d\n", ds.subtitle_stream_idx);
-    printf("Indices index: %d\n", indices_index);
+    printf("Streams - Video: %d, Audio: %d, Subtitle: %d\n", ds.video_stream_idx, ds.audio_stream_idx, ds.subtitle_stream_idx);
     if (ds.video_stream_idx < 0)
     {
         fprintf(stderr, "ERROR: Could not find video stream\n");
@@ -327,71 +323,36 @@ int decoder_init(char *filename)
 
     ds.video_stream = ds.format_ctx->streams[ds.video_stream_idx];
     ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
-    if (ds.subtitle_stream_idx >= 0) {
-        ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
-    }
+    ds.subtitle_stream = (ds.subtitle_stream_idx >= 0) ? ds.format_ctx->streams[ds.subtitle_stream_idx] : NULL;
+    
     const AVCodec *video_codec = avcodec_find_decoder(ds.video_stream->codecpar->codec_id);
     const AVCodec *audio_codec = avcodec_find_decoder(ds.audio_stream->codecpar->codec_id);
-    const AVCodec *subtitle_codec = NULL;
-    if (ds.subtitle_stream_idx >= 0) {
-        subtitle_codec = avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id);
-    }
-    if (!video_codec)
-    {
-        fprintf(stderr, "ERROR: Could not find video codec\n");
-        return -1;
-    }
-    if (!audio_codec)
-    {
-        fprintf(stderr, "ERROR: Could not find audio codec\n");
+    const AVCodec *subtitle_codec = ds.subtitle_stream ? avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id) : NULL;
+    if (!video_codec || !audio_codec) {
+        fprintf(stderr, "ERROR: Could not find required codecs\n");
         return -1;
     }
 
     ds.video_codec_ctx = avcodec_alloc_context3(video_codec);
     ds.audio_codec_ctx = avcodec_alloc_context3(audio_codec);
-    if (subtitle_codec) {
-        ds.subtitle_codec_ctx = avcodec_alloc_context3(subtitle_codec);
-    }
-    if (!ds.video_codec_ctx)
-    {
-        fprintf(stderr, "ERROR: Could not allocate video codec context\n");
-        return -1;
-    }
-    if (!ds.audio_codec_ctx)
-    {
-        fprintf(stderr, "ERROR: Could not allocate audio codec context\n");
+    ds.subtitle_codec_ctx = subtitle_codec ? avcodec_alloc_context3(subtitle_codec) : NULL;
+    
+    if (!ds.video_codec_ctx || !ds.audio_codec_ctx) {
+        fprintf(stderr, "ERROR: Could not allocate codec contexts\n");
         return -1;
     }
 
-    if (avcodec_parameters_to_context(ds.video_codec_ctx, ds.video_stream->codecpar) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not set video codec parameters\n");
-        return -1;
-    }
-    if (avcodec_parameters_to_context(ds.audio_codec_ctx, ds.audio_stream->codecpar) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not set audio codec parameters\n");
-        return -1;
-    }
-    if (ds.subtitle_codec_ctx && avcodec_parameters_to_context(ds.subtitle_codec_ctx, ds.subtitle_stream->codecpar) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not set subtitle codec parameters\n");
+    if (avcodec_parameters_to_context(ds.video_codec_ctx, ds.video_stream->codecpar) < 0 ||
+        avcodec_parameters_to_context(ds.audio_codec_ctx, ds.audio_stream->codecpar) < 0 ||
+        (ds.subtitle_codec_ctx && avcodec_parameters_to_context(ds.subtitle_codec_ctx, ds.subtitle_stream->codecpar) < 0)) {
+        fprintf(stderr, "ERROR: Could not set codec parameters\n");
         return -1;
     }
 
-    if (avcodec_open2(ds.video_codec_ctx, video_codec, NULL) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not open video codec\n");
-        return -1;
-    }
-    if (avcodec_open2(ds.audio_codec_ctx, audio_codec, NULL) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not open audio codec\n");
-        return -1;
-    }
-    if (ds.subtitle_codec_ctx && avcodec_open2(ds.subtitle_codec_ctx, subtitle_codec, NULL) < 0)
-    {
-        fprintf(stderr, "ERROR: Could not open subtitle codec\n");
+    if (avcodec_open2(ds.video_codec_ctx, video_codec, NULL) < 0 ||
+        avcodec_open2(ds.audio_codec_ctx, audio_codec, NULL) < 0 ||
+        (ds.subtitle_codec_ctx && avcodec_open2(ds.subtitle_codec_ctx, subtitle_codec, NULL) < 0)) {
+        fprintf(stderr, "ERROR: Could not open codecs\n");
         return -1;
     }
 
@@ -478,71 +439,31 @@ void decoder_stop(void)
     pthread_mutex_destroy(&ds.texture_mutex);
     pthread_mutex_destroy(&ds.pause_mutex);
 
-    // Clean up queues safely
-    if (ds.video_queue)
-    {
+    // Clean up video queue
+    if (ds.video_queue) {
         queue_free(ds.video_queue);
         ds.video_queue = NULL;
     }
-    if (ds.audio_queue)
-    {
-        queue_free(ds.audio_queue);
-        ds.audio_queue = NULL;
-    }
 
-    // Clean up FFmpeg resources safely
-    if (ds.packet)
-    {
-        av_packet_free(&ds.packet);
-        ds.packet = NULL;
-    }
-    if (ds.video_codec_ctx)
-    {
-        avcodec_free_context(&ds.video_codec_ctx);
-        ds.video_codec_ctx = NULL;
-    }
-    if (ds.audio_codec_ctx)
-    {
-        avcodec_free_context(&ds.audio_codec_ctx);
-        ds.audio_codec_ctx = NULL;
-    }
-    if (ds.subtitle_codec_ctx)
-    {
-        avcodec_free_context(&ds.subtitle_codec_ctx);
-        ds.subtitle_codec_ctx = NULL;
-    }
-    if (ds.sws_ctx)
-    {
-        sws_freeContext(ds.sws_ctx);
-        ds.sws_ctx = NULL;
-    }
-    if (ds.swr_ctx)
-    {
-        swr_free(&ds.swr_ctx);
-        ds.swr_ctx = NULL;
-    }
-    if (ds.fifo)
-    {
-        av_audio_fifo_free(ds.fifo);
-        ds.fifo = NULL;
-    }
-    if (ds.rgba_frame_buffer)
-    {
-        free(ds.rgba_frame_buffer);
-        ds.rgba_frame_buffer = NULL;
-    }
-    if (ds.current_subtitle)
-    {
-        free(ds.current_subtitle);
-        ds.current_subtitle = NULL;
-    }
+    // Clean up FFmpeg resources
+    av_packet_free(&ds.packet);
+    avcodec_free_context(&ds.video_codec_ctx);
+    avcodec_free_context(&ds.audio_codec_ctx);
+    avcodec_free_context(&ds.subtitle_codec_ctx);
+    sws_freeContext(ds.sws_ctx);
+    swr_free(&ds.swr_ctx);
+    av_audio_fifo_free(ds.fifo);
+    free(ds.rgba_frame_buffer);
+    free(ds.current_subtitle);
+    
+    ds.packet = NULL;
+    ds.video_codec_ctx = ds.audio_codec_ctx = ds.subtitle_codec_ctx = NULL;
+    ds.sws_ctx = NULL; ds.swr_ctx = NULL; ds.fifo = NULL;
+    ds.rgba_frame_buffer = NULL; ds.current_subtitle = NULL;
     clear_subtitle_queue();
     pthread_mutex_destroy(&ds.subtitle_mutex);
-    if (ds.format_ctx)
-    {
-        avformat_close_input(&ds.format_ctx);
-        ds.format_ctx = NULL;
-    }
+    avformat_close_input(&ds.format_ctx);
+    ds.format_ctx = NULL;
 }
 
 int decoder_change_audio(char *language)
@@ -559,8 +480,8 @@ int decoder_change_audio(char *language)
         swr_free(&ds.swr_ctx);
     }
 
-    indices_index = (indices_index + 1) % num_audio_streams;
-    ds.audio_stream_idx = indices[indices_index];
+    audio_streams.index = (audio_streams.index + 1) % audio_streams.count;
+    ds.audio_stream_idx = audio_streams.indices[audio_streams.index];
     ds.audio_stream = ds.format_ctx->streams[ds.audio_stream_idx];
     printf("Switching to audio stream index: %d\n", ds.audio_stream_idx);
 
@@ -587,17 +508,10 @@ int decoder_change_audio(char *language)
         return -1;
     }
 
-    // ==========================================================
-    // ============= NEW & CRITICAL SECTION START ===============
-    // ==========================================================
-
+    // Resynchronize streams
     int64_t seek_target = (int64_t)(frame_time / av_q2d(ds.video_stream->time_base));
-    if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0)
-    {
-        fprintf(stderr, "ERROR: Seek failed during audio change!\n");
-    }
-    if (avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0)
-    {
+    if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0 ||
+        avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0) {
         fprintf(stderr, "ERROR: Seek failed during audio change!\n");
     }
 
@@ -605,36 +519,9 @@ int decoder_change_audio(char *language)
     avcodec_flush_buffers(ds.audio_codec_ctx);
     queue_clear(ds.video_queue);
     av_audio_fifo_reset(ds.fifo);
-
     reset_sync_state();
 
-    // ==========================================================
-    // ============= NEW & CRITICAL SECTION END =================
-    // ==========================================================
-
-    // --- 7. Get language metadata for UI ---
-    AVDictionaryEntry *tag = NULL;
-    char lang[256] = "unknown";
-    char title[256] = "";
-    while ((tag = av_dict_get(ds.audio_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
-    {
-        if (strcmp(tag->key, "language") == 0)
-        {
-            strncpy(lang, tag->value, sizeof(lang) - 1);
-        }
-        if (strcmp(tag->key, "title") == 0)
-        {
-            strncpy(title, tag->value, sizeof(title) - 1);
-        }
-    }
-    if (title[0] != '\0')
-    {
-        snprintf(language, 512, "%s - %s", title, lang);
-    }
-    else
-    {
-        snprintf(language, 512, "%s", lang);
-    }
+    extract_stream_metadata(ds.audio_stream, language, 512);
     printf("Switched to language: %s\n", language);
 
     // --- 8. Resume processing ---
@@ -653,15 +540,15 @@ int decoder_change_subtitle(char *language)
         avcodec_free_context(&ds.subtitle_codec_ctx);
     }
     clear_subtitle_queue();
-    if (sub_num_subtitle_streams > 0) {
-        sub_indices_index = (sub_indices_index + 1) % sub_num_subtitle_streams;
+    if (subtitle_streams.count > 0) {
+        subtitle_streams.index = (subtitle_streams.index + 1) % subtitle_streams.count;
+        ds.subtitle_stream_idx = subtitle_streams.indices[subtitle_streams.index];
     } else {
         printf("No subtitle streams available.\n");
         pthread_mutex_unlock(&ds.queue_mutex);
         pthread_mutex_unlock(&ds.pause_mutex);
         return -1;
     }
-    ds.subtitle_stream_idx = sub_indices[sub_indices_index];
     ds.subtitle_stream = ds.format_ctx->streams[ds.subtitle_stream_idx];
 
     const AVCodec *sub_codec = avcodec_find_decoder(ds.subtitle_stream->codecpar->codec_id);
@@ -674,28 +561,7 @@ int decoder_change_subtitle(char *language)
         return -1;
     }
 
-    AVDictionaryEntry *tag = NULL;
-    char lang[256] = "unknown";
-    char title[256] = "";
-    while ((tag = av_dict_get(ds.subtitle_stream->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
-    {
-        if (strcmp(tag->key, "language") == 0)
-        {
-            strncpy(lang, tag->value, sizeof(lang) - 1);
-        }
-        if (strcmp(tag->key, "title") == 0)
-        {
-            strncpy(title, tag->value, sizeof(title) - 1);
-        }
-    }
-    if (title[0] != '\0')
-    {
-        snprintf(language, 512, "%s - %s", title, lang);
-    }
-    else
-    {
-        snprintf(language, 512, "%s", lang);
-    }
+    extract_stream_metadata(ds.subtitle_stream, language, 512);
     printf("Switched to language: %s\n", language);
     pthread_mutex_unlock(&ds.queue_mutex);
     pthread_mutex_unlock(&ds.pause_mutex);
@@ -755,30 +621,11 @@ const char *get_current_subtitle(double current_time)
 {
     pthread_mutex_lock(&ds.subtitle_mutex);
     
-    SubtitleItem *current = ds.subtitle_queue;
-    static double last_debug_time = 0;
-    
-    // Debug output every 2 seconds to avoid spam
-    if (current_time - last_debug_time > 2.0) {
-        printf("Checking subtitles at time %.3f:\n", current_time);
-        SubtitleItem *debug_item = current;
-        int count = 0;
-        while (debug_item && count < 3) {
-            printf("  Subtitle %d: [%.3f - %.3f] %s\n", count, 
-                   debug_item->start_time, debug_item->end_time, 
-                   debug_item->text ? debug_item->text : "NULL");
-            debug_item = debug_item->next;
-            count++;
-        }
-        last_debug_time = current_time;
-    }
-    
-    while (current) {
+    for (SubtitleItem *current = ds.subtitle_queue; current; current = current->next) {
         if (current_time >= current->start_time && current_time <= current->end_time) {
             pthread_mutex_unlock(&ds.subtitle_mutex);
             return current->text;
         }
-        current = current->next;
     }
     
     pthread_mutex_unlock(&ds.subtitle_mutex);
@@ -789,14 +636,12 @@ void clear_subtitle_queue(void)
 {
     pthread_mutex_lock(&ds.subtitle_mutex);
     
-    SubtitleItem *current = ds.subtitle_queue;
-    while (current) {
-        SubtitleItem *next = current->next;
-        free(current->text);
-        free(current);
-        current = next;
+    while (ds.subtitle_queue) {
+        SubtitleItem *next = ds.subtitle_queue->next;
+        free(ds.subtitle_queue->text);
+        free(ds.subtitle_queue);
+        ds.subtitle_queue = next;
     }
-    ds.subtitle_queue = NULL;
     
     pthread_mutex_unlock(&ds.subtitle_mutex);
 }

@@ -23,8 +23,8 @@ Resource resources[] = {
     { .file_path = "./assets/icons/stop.png" },
     { .file_path = "./assets/icons/volume.png" },
     { .file_path = "./assets/icons/mute.png" },
-    { .file_path = "./assets/fonts/CircularSpotifyText-Black.otf" },
-    { .file_path = "./assets/fonts/CircularSpotifyText-Bold.otf" },
+    { .file_path = "./assets/fonts/SourceSans3-Bold.ttf" },
+    { .file_path = "./assets/fonts/GoogleSansText-Bold.ttf" },
     {.file_path = "./assets/logos/bytestream-256.png" },
 };
 

@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 
             char *select_text = "Byte Stream - v" BYTESTREAM_VERSION;
             float title_size = 48.0f;
-            Font title_font = get_best_font(app.fonts, title_size);
+            Font title_font = get_best_font(app.fonts, title_size, UI_FONT);
             Vector2 textSize1 = MeasureTextEx(title_font, select_text, title_size, 1.0f);
             Vector2 text1 = {(screenWidth - textSize1.x) / 2, logoY + logo_texture.height};
 
@@ -121,7 +121,7 @@ int main(int argc, char **argv)
             DrawTextEx(title_font, select_text, text1, title_size, 0.0f, WHITE);
 
             float button_size = 24.0f;
-            Font button_font = get_best_font(app.fonts, button_size);
+            Font button_font = get_best_font(app.fonts, button_size, UI_FONT);
             const char *buttonText = "Select Video";
             Vector2 buttonTextSize = MeasureTextEx(button_font, buttonText, button_size, 0.0f);
 
@@ -134,7 +134,7 @@ int main(int argc, char **argv)
 
             if (*errorMsg)
             {
-                Font error_font = get_best_font(app.fonts, 20);
+                Font error_font = get_best_font(app.fonts, 20, UI_FONT);
                 float error_size = 20.0f;
                 Vector2 errorSize = MeasureTextEx(error_font, errorMsg, error_size, 1.0f);
                 DrawTextEx(error_font, errorMsg,

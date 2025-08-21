@@ -12,6 +12,7 @@
 #define BUTTON_RADIUS ICON_SIZE * 1.5f
 #define MIN_VOLUME_ALLOWED 0
 #define MAX_VOLUME_ALLOWED 500
+#define SEEK_STEP 5.0
 typedef struct
 {
     Shader *shaders;
@@ -20,33 +21,59 @@ typedef struct
 } ShaderArray;
 
 PlayerState ps = {0};
-Texture2D playTexture;
-Texture2D pauseTexture;
-Texture2D ffTexture;
-Texture2D bbTexture;
-Texture2D volumeTexture;
-Texture2D muteTexture;
+Texture2D playTexture, pauseTexture, ffTexture, bbTexture, volumeTexture, muteTexture;
 double last_hover_time = -5.0f;
 double last_volume_change_time = -5.0f;
 double last_audio_change_time = -5.0f;
 double last_subtitle_change_time = -5.0f;
-char audio_language[512];
-char subtitle_language[512];
-static float lastClickTime = 0.0f;              // Time of the last click
-static const float doubleClickThreshold = 0.3f; // Threshold for double click (in seconds)
-static bool show_help_menu = false;             // Help menu visibility
+char audio_language[512], subtitle_language[512];
+static float lastClickTime = 0.0f;
+static const float doubleClickThreshold = 0.3f;
+static bool show_help_menu = false;
 ShaderArray shaderArray = {0};
 
-char *get_file_title(DecoderState *ds)
+// UI caching
+static Font ui_font, subtitle_display_font;
+static float ui_font_size, subtitle_font_size;
+static bool fonts_initialized = false;
+
+static inline void init_fonts_if_needed(int screen_width, int screen_height)
 {
-    while ((ds->tag = av_dict_get(ds->format_ctx->metadata, "", ds->tag, AV_DICT_IGNORE_SUFFIX)))
-    {
-        if (strcmp(ds->tag->key, "title") == 0)
-        {
-            return ds->tag->value;
-        }
+    if (!fonts_initialized) {
+        float scale_factor = fminf(screen_width / 1200.0f, screen_height / 800.0f);
+        scale_factor = fmaxf(scale_factor, 0.5f);
+        scale_factor = fminf(scale_factor, 1.5f);
+        
+        ui_font_size = 24 * scale_factor;
+        subtitle_font_size = 48;
+        ui_font = get_best_font(app.fonts, ui_font_size, UI_FONT);
+        subtitle_display_font = get_best_font(app.fonts, subtitle_font_size, SUBTITLE_FONT);
+        fonts_initialized = true;
     }
-    return "Untitled";
+}
+
+static void perform_seek(double seek_time)
+{
+    double total_runtime = (double)ds.format_ctx->duration / AV_TIME_BASE;
+    if (seek_time < 0) seek_time = 0;
+    if (seek_time > total_runtime) seek_time = total_runtime;
+
+    int flags = (seek_time < frame_time) ? AVSEEK_FLAG_BACKWARD : 0;
+    int64_t seek_target = (int64_t)(seek_time / av_q2d(ds.video_stream->time_base));
+    
+    if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, flags) < 0 ||
+        avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_target, INT64_MAX, flags) < 0) {
+        fprintf(stderr, "ERROR: Seek failed!\n");
+        return;
+    }
+    
+    avcodec_flush_buffers(ds.video_codec_ctx);
+    avcodec_flush_buffers(ds.audio_codec_ctx);
+    queue_clear(ds.video_queue);
+    av_audio_fifo_reset(ds.fifo);
+    reset_sync_state();
+    frame_time = seek_time;
+    last_hover_time = GetTime();
 }
 
 void audio_callback(void *buffer, unsigned int frames)
@@ -172,28 +199,25 @@ void to_timestamp(char *dst, int time)
         sprintf(dst, "%02d:%02d", minutes, seconds);
 }
 
-void TogglePause(void)
+static inline void TogglePause(void)
 {
-    if (ps.is_playing)
-    {
-        ps.is_playing = false;
-        pause_decoder();
-        PauseAudioStream(ps.raylib_audio_stream);
-    }
-    else
-    {
-        ps.is_playing = true;
+    ps.is_playing = !ps.is_playing;
+    if (ps.is_playing) {
         ResumeAudioStream(ps.raylib_audio_stream);
         resume_decoder();
+    } else {
+        pause_decoder();
+        PauseAudioStream(ps.raylib_audio_stream);
     }
 }
 void player_update(void)
 {
     int screenWidth = GetDisplayWidth();
     int screenHeight = GetDisplayHeight();
-    float settingHeight = fmaxf(screenHeight * 0.15f, 100.0f); // Minimum 100px height for controls
-
+    double current_time = GetTime();
     double total_runtime = (double)ds.format_ctx->duration / AV_TIME_BASE;
+    
+    init_fonts_if_needed(screenWidth, screenHeight);
 
     float dest_width = (float)ds.video_codec_ctx->width;
     float dest_height = (float)ds.video_codec_ctx->height;
@@ -221,19 +245,19 @@ void player_update(void)
         dest_rect.y = (screenHeight - dest_rect.height) / 2;
     }
 
-    if (IsKeyPressed(KEY_SPACE))
-    {
+    // Handle input events
+    if (IsKeyPressed(KEY_SPACE)) {
         TogglePause();
-        last_hover_time = GetTime();
+        last_hover_time = current_time;
     }
-
-    // Toggle help menu with ? key (question mark key)
-    if (IsKeyPressed(KEY_SLASH) && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)))
-    {
+    if (IsKeyPressed(KEY_SLASH) && (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
         show_help_menu = !show_help_menu;
-        last_hover_time = GetTime();
+        last_hover_time = current_time;
     }
 
+    float scale_factor = ui_font_size / 24.0f;
+    float settingHeight = fmaxf(screenHeight * 0.15f, 100.0f);
+    
     // Controls area at bottom of screen as overlay
     Rectangle setting = {0, (float)screenHeight - settingHeight,
                          (float)screenWidth, settingHeight};
@@ -244,18 +268,9 @@ void player_update(void)
     to_timestamp(elapsed_text, frame_time);
     to_timestamp(total_text, (int)total_runtime);
     sprintf(time_text, "%s / %s", elapsed_text, total_text);
-
-    // Scale UI elements based on screen size
-    float scale_factor = fminf(screenWidth / 1200.0f, screenHeight / 800.0f);
-    scale_factor = fmaxf(scale_factor, 0.5f); // Minimum scale to keep readable
-    scale_factor = fminf(scale_factor, 1.5f); // Maximum scale to prevent oversized UI
-
-    int time_fontsize = 28;
-    Font time_font = get_best_font(app.fonts, time_fontsize);
-    int title_fontsize = 28;
-    Font title_font = get_best_font(app.fonts, title_fontsize);
-    Vector2 timeTextSize = MeasureTextEx(time_font, time_text, time_fontsize, 0);
-    Vector2 videoTitleSize = MeasureTextEx(title_font, ps.file_title, title_fontsize, 0);
+    
+    Vector2 timeTextSize = MeasureTextEx(ui_font, time_text, ui_font_size, 0);
+    Vector2 videoTitleSize = MeasureTextEx(ui_font, ps.file_title, ui_font_size, 0);
 
     float margin = 10 * scale_factor;
     float seekBarWidth = setting.width - 2 * margin;
@@ -297,12 +312,12 @@ void player_update(void)
     currentX += iconSize + controlSpacing;
 
     // Time display
-    Vector2 timePos = {currentX, controlsY + (iconSize - time_fontsize) / 2};
+    Vector2 timePos = {currentX, controlsY + (iconSize - ui_font_size) / 2};
     currentX += timeTextSize.x + controlSpacing;
 
     // Video title (right-aligned or remaining space)
     float remainingWidth = setting.width - currentX - margin;
-    Vector2 titlePos = {currentX, controlsY + (iconSize - title_fontsize) / 2};
+    Vector2 titlePos = {currentX, controlsY + (iconSize - ui_font_size) / 2};
 
     // Vector2 pill = {seekBar.x + seekBar.width * (float)(frame_time / total_runtime), seekBar.y};
 
@@ -320,150 +335,64 @@ void player_update(void)
         SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     }
 
-    if (IsKeyPressed(KEY_UP) || GetMouseWheelMove() > 0)
-    {
-        if (ps.volume < MAX_VOLUME_ALLOWED && !ps.is_muted)
-        {
-            ps.volume += 10;
-            SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
-            last_volume_change_time = GetTime();
-        }
+    // Volume controls
+    float wheel_move = GetMouseWheelMove();
+    if ((IsKeyPressed(KEY_UP) || wheel_move > 0) && ps.volume < MAX_VOLUME_ALLOWED && !ps.is_muted) {
+        ps.volume += 10;
+        SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+        last_volume_change_time = current_time;
     }
-    if (IsKeyPressed(KEY_DOWN) || GetMouseWheelMove() < 0)
-    {
-        if (ps.volume > MIN_VOLUME_ALLOWED && !ps.is_muted)
-        {
-            ps.volume -= 10;
-            SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
-            last_volume_change_time = GetTime();
-        }
+    if ((IsKeyPressed(KEY_DOWN) || wheel_move < 0) && ps.volume > MIN_VOLUME_ALLOWED && !ps.is_muted) {
+        ps.volume -= 10;
+        SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+        last_volume_change_time = current_time;
     }
-    if (IsKeyPressed(KEY_M))
-    {
+    if (IsKeyPressed(KEY_M)) {
         ps.is_muted = !ps.is_muted;
         SetAudioStreamVolume(ps.raylib_audio_stream, ps.is_muted ? 0 : ps.volume / 100);
-        last_volume_change_time = GetTime();
+        last_volume_change_time = current_time;
     }
-    if (IsKeyPressed(KEY_P) && !ps.is_playing)
-    {
-        if (ExportImage(LoadImageFromTexture(ps.texture), "frame.png"))
-        {
-            TraceLog(LOG_INFO, "Saved frame in  an image");
-        }
+    if (IsKeyPressed(KEY_P) && !ps.is_playing && ExportImage(LoadImageFromTexture(ps.texture), "frame.png")) {
+        TraceLog(LOG_INFO, "Saved frame in an image");
     }
-    if (IsKeyPressed(KEY_B))
-    {
+    if (IsKeyPressed(KEY_B)) {
         decoder_change_audio(audio_language);
-        last_audio_change_time = GetTime();
+        last_audio_change_time = current_time;
     }
-    if (IsKeyPressed(KEY_V))
-    {
+    if (IsKeyPressed(KEY_V)) {
         decoder_change_subtitle(subtitle_language);
-        last_subtitle_change_time = GetTime();
+        last_subtitle_change_time = current_time;
     }
 
-    if (IsKeyPressed(KEY_LEFT))
-    {
-        double seek_time = frame_time - 5.0;
-        if (seek_time < 0)
-            seek_time = 0;
-        if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
-        {
-            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
-        }
-        if (avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
-        {
-            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
-        }
-
-        avcodec_flush_buffers(ds.video_codec_ctx);
-        avcodec_flush_buffers(ds.audio_codec_ctx);
-        queue_clear(ds.video_queue);
-        av_audio_fifo_reset(ds.fifo);
-
-        reset_sync_state();
-
-        frame_time = seek_time;
-        last_hover_time = GetTime();
+    // Seek controls
+    if (IsKeyPressed(KEY_LEFT)) {
+        perform_seek(frame_time - SEEK_STEP);
     }
-
-    if (IsKeyPressed(KEY_RIGHT))
-    {
-        double total_runtime = (double)ds.format_ctx->duration / AV_TIME_BASE;
-        double seek_time = frame_time + 5.0;
-
-        if (seek_time > total_runtime)
-            seek_time = total_runtime;
-
-        if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
-        {
-            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
-        }
-        if (avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_time, INT64_MAX, 0) < 0)
-        {
-            fprintf(stderr, "ERROR: Seek failed during audio change!\n");
-        }
-
-        avcodec_flush_buffers(ds.video_codec_ctx);
-        avcodec_flush_buffers(ds.audio_codec_ctx);
-        queue_clear(ds.video_queue);
-        av_audio_fifo_reset(ds.fifo);
-
-        reset_sync_state();
-
-        frame_time = seek_time;
-        last_hover_time = GetTime();
+    if (IsKeyPressed(KEY_RIGHT)) {
+        perform_seek(frame_time + SEEK_STEP);
     }
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
         Vector2 mousePos = GetMousePosition();
 
-        if (CheckCollisionPointRec(mousePos, seekBar) ||
-            CheckCollisionPointRec(mousePos, seekBarCurrentPos))
-        {
+        if (CheckCollisionPointRec(mousePos, seekBar) || CheckCollisionPointRec(mousePos, seekBarCurrentPos)) {
             float seekTime = ((mousePos.x - seekBar.x) / seekBar.width) * total_runtime;
-            if (seekTime < 0)
-                seekTime = 0;
-            if (seekTime > total_runtime)
-                seekTime = total_runtime;
-
-            int flags = 0;
-            if (seekTime < frame_time)
-                flags = AVSEEK_FLAG_BACKWARD;
-
-            printf("Seeking to %.2f seconds\n", seekTime);
-            int64_t seek_target = (int64_t)(seekTime / av_q2d(ds.video_stream->time_base));
-            if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, flags) < 0)
-            {
-                printf("Seek error!\n");
-            }
-            avcodec_flush_buffers(ds.video_codec_ctx);
-            avcodec_flush_buffers(ds.audio_codec_ctx);
-            queue_clear(ds.video_queue);
-            av_audio_fifo_reset(ds.fifo);
-
-            reset_sync_state();
-
-            frame_time = seekTime;
-            last_hover_time = GetTime();
+            perform_seek(seekTime);
         }
-        else if (CheckCollisionPointRec(mousePos, playPauseButton))
-        {
+        else if (CheckCollisionPointRec(mousePos, playPauseButton)) {
             TogglePause();
-            last_hover_time = GetTime();
+            last_hover_time = current_time;
         }
-        else if (CheckCollisionPointRec(mousePos, volumeButton))
-        {
+        else if (CheckCollisionPointRec(mousePos, volumeButton)) {
             ps.is_muted = !ps.is_muted;
             SetAudioStreamVolume(ps.raylib_audio_stream, ps.is_muted ? 0 : ps.volume / 100);
-            last_volume_change_time = GetTime();
-            last_hover_time = GetTime();
+            last_volume_change_time = current_time;
+            last_hover_time = current_time;
         }
-        else
-        {
+        else {
             TogglePause();
-            last_hover_time = GetTime();
+            last_hover_time = current_time;
         }
     }
     if (IsFileDropped())
@@ -519,9 +448,9 @@ void player_update(void)
 
     if (shouldShowControls)
         last_hover_time = GetTime();
-    if (GetTime() - last_hover_time < 3.0f || shouldShowControls)
+    if (current_time - last_hover_time < 3.0f || shouldShowControls)
     {
-        double alpha = shouldShowControls ? 1.0 : (1.0 - (GetTime() - last_hover_time) / 3.0);
+        double alpha = shouldShowControls ? 1.0 : (1.0 - (current_time - last_hover_time) / 3.0);
         if (alpha < 0)
             alpha = 0;
         if (alpha > 1)
@@ -560,14 +489,14 @@ void player_update(void)
                        Fade(RAYWHITE, alpha));
 
         // Draw time display
-        DrawTextEx(time_font, time_text, timePos, time_fontsize, 0, Fade(RAYWHITE, alpha));
+        DrawTextEx(ui_font, time_text, timePos, ui_font_size, 0, Fade(RAYWHITE, alpha));
 
         // Draw video title (truncate if too long)
         const char *displayTitle = ps.file_title;
         char truncatedTitle[256];
         if (videoTitleSize.x > remainingWidth && remainingWidth > 50)
         {
-            int maxChars = (remainingWidth - 20) / (title_fontsize * 0.6f); // rough estimate
+            int maxChars = (remainingWidth - 20) / (ui_font_size * 0.6f);
             if (maxChars > 0 && maxChars < 253)
             {
                 strncpy(truncatedTitle, ps.file_title, maxChars);
@@ -578,115 +507,125 @@ void player_update(void)
                 displayTitle = truncatedTitle;
             }
         }
-        DrawTextEx(title_font, displayTitle, titlePos, title_fontsize, 0, Fade(RAYWHITE, alpha));
+        DrawTextEx(ui_font, displayTitle, titlePos, ui_font_size, 0, Fade(RAYWHITE, alpha));
     }
-    if (GetTime() - last_volume_change_time < 3.0f)
+    if (current_time - last_volume_change_time < 3.0f)
     {
-        int vol_height = 400;
-        int vol_width = 20;
+        int vol_height = 400, vol_width = 20;
         float filled_height = vol_height * ps.volume / MAX_VOLUME_ALLOWED;
-        float filled_y = (GetScreenHeight() / 2.0f) + (vol_height / 2.0f) - filled_height;
-        Rectangle vol_inner_rect = {
-            GetScreenWidth() - 2 * vol_width,
-            filled_y,
-            vol_width,
-            filled_height};
+        float filled_y = (screenHeight / 2.0f) + (vol_height / 2.0f) - filled_height;
+        Rectangle vol_inner_rect = {screenWidth - 2 * vol_width, filled_y, vol_width, filled_height};
 
-        DrawRectangleLines(
-            GetScreenWidth() - 2 * vol_width,
-            (GetScreenHeight() / 2.0f) - vol_height / 2.0f,
-            vol_width,
-            vol_height,
-            ACCENT_COLOR);
+        DrawRectangleLines(screenWidth - 2 * vol_width, (screenHeight / 2.0f) - vol_height / 2.0f, vol_width, vol_height, ACCENT_COLOR);
         DrawRectangleRec(vol_inner_rect, Fade(ACCENT_COLOR, 0.8f));
-        Font volume_font = get_best_font(app.fonts, FONT_SIZE);
-        Vector2 textSize = MeasureTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
-        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, ACCENT_COLOR);
+        
+        const char *vol_text = TextFormat("Volume: %d%%", (int)ps.volume);
+        Vector2 textSize = MeasureTextEx(ui_font, vol_text, FONT_SIZE, 0);
+        Vector2 textPos = {screenWidth - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(ui_font, vol_text, textPos, FONT_SIZE, 0, ACCENT_COLOR);
     }
 
-    if (GetTime() - last_audio_change_time < 3.0f)
+    if (current_time - last_audio_change_time < 3.0f)
     {
-        Font audio_font = get_best_font(app.fonts, FONT_SIZE);
-        Vector2 textSize = MeasureTextEx(audio_font, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
-        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(audio_font, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, ACCENT_COLOR);
+        const char *audio_text = TextFormat("Audio: %s", audio_language);
+        Vector2 textSize = MeasureTextEx(ui_font, audio_text, FONT_SIZE, 0);
+        Vector2 textPos = {screenWidth - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(ui_font, audio_text, textPos, FONT_SIZE, 0, ACCENT_COLOR);
     }
-    if (GetTime() - last_subtitle_change_time < 3.0f)
+    if (current_time - last_subtitle_change_time < 3.0f)
     {
-        Font subtitle_font = get_best_font(app.fonts, FONT_SIZE);
-        Vector2 textSize = MeasureTextEx(subtitle_font, TextFormat("Subtitle: %s", subtitle_language), FONT_SIZE, 0);
-        Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(subtitle_font, TextFormat("Subtitle: %s", subtitle_language), textPos, FONT_SIZE, 0, RAYWHITE);
+        const char *subtitle_text = TextFormat("Subtitle: %s", subtitle_language);
+        Vector2 textSize = MeasureTextEx(ui_font, subtitle_text, FONT_SIZE, 0);
+        Vector2 textPos = {screenWidth - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(ui_font, subtitle_text, textPos, FONT_SIZE, 0, RAYWHITE);
     }
 
     // Display subtitle if one should be visible at current time
     const char *current_subtitle = get_current_subtitle((double)frame_time);
     if (current_subtitle && current_subtitle[0] != '\0')
     {
-        int subtitle_fontsize = 48;
-        Font current_subtitle_font = get_best_font(app.fonts, subtitle_fontsize);
-        Vector2 a = MeasureTextEx(current_subtitle_font, current_subtitle, subtitle_fontsize, 0);
-        DrawTextEx(current_subtitle_font, current_subtitle,
-                   (Vector2){screenWidth / 2 - a.x / 2, screenHeight - subtitle_bottom},
-                   subtitle_fontsize, 0, WHITE);
+        Vector2 subtitle_size = MeasureTextEx(subtitle_display_font, current_subtitle, subtitle_font_size, 0);
+        DrawRectangleRounded(
+            (Rectangle){screenWidth / 2 - subtitle_size.x / 2 - 10, screenHeight - subtitle_bottom - 10, subtitle_size.x + 20, subtitle_size.y + 20},
+            0.1f, 10, Fade(BLACK, 0.5f));
+        DrawTextEx(subtitle_display_font, current_subtitle,
+                   (Vector2){screenWidth / 2 - subtitle_size.x / 2, screenHeight - subtitle_bottom},
+                   subtitle_font_size, 0, WHITE);
     }
-
-    // Draw help menu if visible
     if (show_help_menu)
     {
-        // Semi-transparent overlay background
         DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.8f));
 
-        // Help menu title
-        const char *title = "KEYBOARD CONTROLS";
-        int help_fontsize = 24;
-        Font help_title_font = get_best_font(app.fonts, help_fontsize);
-        Vector2 titleSize = MeasureTextEx(help_title_font, title, help_fontsize, 0);
-        Vector2 titlePos = {screenWidth / 2 - titleSize.x / 2, 50};
-        DrawTextEx(help_title_font, title, titlePos, help_fontsize, 0, WHITE);
-
-        // Help menu content
-        const char *help_text[] = {
-            "SPACE           - Play/Pause",
-            "LEFT/RIGHT      - Seek -5s/+5s",
-            "UP/DOWN         - Volume +/-",
-            "Mouse Wheel     - Volume +/-",
-            "M               - Mute/Unmute",
-            "B               - Change Audio Track",
-            "V               - Change Subtitle Track",
-            "P               - Save Screenshot (when paused)",
-            "U               - Unload Shaders",
-            "?               - Toggle this Help Menu",
-            "ESC             - Close Player",
-            "",
-            "MOUSE CONTROLS:",
-            "Click Seekbar   - Seek to Position",
-            "Click Play/Pause- Play/Pause",
-            "Click Volume    - Mute/Unmute",
-            "Click Video     - Play/Pause",
-            "Drag & Drop     - Load Shader (.fs files)"};
-
-        int help_lines = sizeof(help_text) / sizeof(help_text[0]);
-        float line_height = help_fontsize + 5;
-        float start_y = titlePos.y + titleSize.y + 40;
-
-        Font help_content_font = get_best_font(app.fonts, help_fontsize);
-        for (int i = 0; i < help_lines; i++)
+        // Define table data structure
+        typedef struct
         {
-            Vector2 pos = {100, start_y + i * line_height};
-            Color text_color = WHITE;
-            if (text_color.a > 0)
-                DrawTextEx(help_content_font, help_text[i], pos, help_fontsize * 0.8f, 0, text_color);
+            const char *key;
+            const char *description;
+        } HelpTableRow;
+
+        const HelpTableRow keyboard_controls[] = {
+            {"SPACE", "Play/Pause"},
+            {"LEFT/RIGHT", "Seek -5s/+5s"},
+            {"UP/DOWN", "Volume +/-"},
+            {"M", "Mute/Unmute"},
+            {"B", "Change Audio Track"},
+            {"V", "Change Subtitle Track"},
+            {"P", "Save Screenshot (when paused)"},
+            {"U", "Unload Shaders"},
+            {"?", "Toggle this Help Menu"},
+            {"ESC", "Close Player"},
+            {"Mouse Wheel", "Volume +/-"},
+            {"Click Seekbar", "Seek to Position"},
+            {"Click Play/Pause", "Play/Pause"},
+            {"Click Volume", "Mute/Unmute"},
+            {"Click Video", "Play/Pause"},
+            {"Drag & Drop .fs", "Load Shader Files"}};
+
+        int kb_rows = ARRAY_LEN(keyboard_controls);
+        Font help_font = get_best_font(app.fonts, FONT_SIZE, UI_FONT);
+        float font_size = FONT_SIZE;
+        float max_key_width = 0;
+        float max_desc_width = 0;
+
+        for (int i = 0; i < kb_rows; i++)
+        {
+            Vector2 key_size = MeasureTextEx(help_font, keyboard_controls[i].key, font_size, 0);
+            Vector2 desc_size = MeasureTextEx(help_font, keyboard_controls[i].description, font_size, 0);
+            if (key_size.x > max_key_width)
+                max_key_width = key_size.x;
+            if (desc_size.x > max_desc_width)
+                max_desc_width = desc_size.x;
         }
+        float padding = 15;
+        float row_height = font_size;
+        float section_gap = padding * 3;
+        float key_column_width = max_key_width + padding * 2;
+        float desc_column_width = max_desc_width + padding * 2;
+        float table_width = key_column_width + desc_column_width;
+        float table_height = (kb_rows + 2) * row_height + section_gap + padding * 2;
+        float table_x = (screenWidth - table_width) / 2;
+        float table_y = (screenHeight - table_height) / 2 - 50;
 
-        // Instructions at bottom
+        const char *main_title = "CONTROLS REFERENCE";
+        Vector2 main_title_size = MeasureTextEx(help_font, main_title, font_size, 0);
+        Vector2 main_title_pos = {(screenWidth - main_title_size.x) / 2, table_y - 80};
+        DrawTextEx(help_font, main_title, main_title_pos, font_size, 0, WHITE);
 
+        float current_y = table_y + padding;
+        current_y += row_height + 10;
+        for (int i = 0; i < kb_rows; i++)
+        {
+            Vector2 key_size = MeasureTextEx(help_font, keyboard_controls[i].key, font_size, 0);
+            Vector2 key_pos = {table_x + key_column_width - key_size.x - padding, current_y};
+            DrawTextEx(help_font, keyboard_controls[i].key, key_pos, font_size, 0, ACCENT_COLOR);
+            Vector2 desc_pos = {table_x + key_column_width + padding, current_y};
+            DrawTextEx(help_font, keyboard_controls[i].description, desc_pos, font_size, 0, WHITE);
+            current_y += row_height;
+        }
         const char *close_text = "Press ? again to close this menu";
-        Font help_close_font = get_best_font(app.fonts, help_fontsize * 0.7f);
-        Vector2 closeSize = MeasureTextEx(help_close_font, close_text, help_fontsize * 0.7f, 0);
-        Vector2 closePos = {screenWidth / 2 - closeSize.x / 2, screenHeight - 50};
-        DrawTextEx(help_close_font, close_text, closePos, help_fontsize * 0.7f, 0, GRAY);
+        Vector2 close_size = MeasureTextEx(help_font, close_text, font_size, 0);
+        Vector2 close_pos = {(screenWidth - close_size.x) / 2, screenHeight - close_size.y - 10};
+        DrawTextEx(help_font, close_text, close_pos, font_size, 0, GRAY);
     }
 
     EndDrawing();

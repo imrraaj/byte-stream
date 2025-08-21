@@ -9,6 +9,7 @@ typedef struct
 {
     Font font;
     int size;
+    const char *name;
 } Custom_Font;
 
 typedef struct
@@ -20,5 +21,5 @@ typedef struct
 
 Custom_Fonts init_fonts(void);
 void cleanup_fonts(Custom_Fonts fonts);
-Font get_best_font(Custom_Fonts fonts, int target);
+Font get_best_font(Custom_Fonts fonts, int target, const char *name);
 #endif // FONT_H

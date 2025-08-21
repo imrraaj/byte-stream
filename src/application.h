@@ -14,6 +14,9 @@
 // #define ACCENT_COLOR GetColor(0x133E31FF)
 #define ACCENT_COLOR RAYWHITE
 
+#define UI_FONT "./assets/fonts/SourceSans3-Bold.ttf"
+#define SUBTITLE_FONT "./assets/fonts/GoogleSansText-Bold.ttf"
+
 typedef struct {
     Custom_Fonts fonts;
 } Application;
