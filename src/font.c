@@ -15,7 +15,7 @@ Font get_best_font(Custom_Fonts fonts, int target)
 Custom_Fonts init_fonts(void)
 {
     Custom_Fonts fonts = {0};
-    int font_sizes[] = {12, 16, 20, 24, 32, 48, 64, 72};
+    int font_sizes[] = {12, 16, 18, 20, 24, 28, 30, 32, 36, 48, 64, 72};
     for (size_t i = 0; i < ARRAY_LEN(font_sizes); i++)
     {
         Custom_Font f = {

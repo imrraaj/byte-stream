@@ -14,6 +14,7 @@ struct PlayerState
   char *file_title;
   float volume;
   bool is_playing;
+  bool is_muted;
 };
 typedef enum
 {

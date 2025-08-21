@@ -120,7 +120,7 @@ int main(int argc, char **argv)
             DrawTexture(logo_texture, logoX, logoY, WHITE);
             DrawTextEx(title_font, select_text, text1, title_size, 0.0f, WHITE);
 
-            float button_size = 32.0f;
+            float button_size = 24.0f;
             Font button_font = get_best_font(app.fonts, button_size);
             const char *buttonText = "Select Video";
             Vector2 buttonTextSize = MeasureTextEx(button_font, buttonText, button_size, 0.0f);
