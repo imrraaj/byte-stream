@@ -3,5 +3,6 @@ videos/
 .vscode/
 compile_commands.json
 generator
+generator.old
 include/bundle.h
 .DS_Store

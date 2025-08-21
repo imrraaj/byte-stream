@@ -107,7 +107,7 @@ int player_init(char *filename)
     ps.volume = 100.0f;
     playTexture = bundle_load_texture("./assets/icons/play.png");
     pauseTexture = bundle_load_texture("./assets/icons/pause.png");
-    ffTexture = bundle_load_texture("./assets/icons/ff.png");
+    ffTexture = bundle_load_texture("./assets/icons/next.png");
     bbTexture = bundle_load_texture("./assets/icons/bb.png");
     volumeTexture = bundle_load_texture("./assets/icons/volume.png");
     muteTexture = bundle_load_texture("./assets/icons/mute.png");
@@ -202,7 +202,7 @@ void player_update(void)
     float display_aspect_ratio = (float)screenWidth / (float)screenHeight;
 
     Rectangle dest_rect;
-    
+
     // Video takes full screen, respecting aspect ratio
     if (display_aspect_ratio > video_aspect_ratio)
     {
@@ -234,8 +234,6 @@ void player_update(void)
         last_hover_time = GetTime();
     }
 
-
-
     // Controls area at bottom of screen as overlay
     Rectangle setting = {0, (float)screenHeight - settingHeight,
                          (float)screenWidth, settingHeight};
@@ -251,21 +249,21 @@ void player_update(void)
     float scale_factor = fminf(screenWidth / 1200.0f, screenHeight / 800.0f);
     scale_factor = fmaxf(scale_factor, 0.5f); // Minimum scale to keep readable
     scale_factor = fminf(scale_factor, 1.5f); // Maximum scale to prevent oversized UI
-    
-    int time_fontsize = (int)(20 * scale_factor);
+
+    int time_fontsize = 28;
     Font time_font = get_best_font(app.fonts, time_fontsize);
-    int title_fontsize = (int)(20 * scale_factor);
+    int title_fontsize = 28;
     Font title_font = get_best_font(app.fonts, title_fontsize);
     Vector2 timeTextSize = MeasureTextEx(time_font, time_text, time_fontsize, 0);
     Vector2 videoTitleSize = MeasureTextEx(title_font, ps.file_title, title_fontsize, 0);
-    
+
     float margin = 10 * scale_factor;
     float seekBarWidth = setting.width - 2 * margin;
     float seekBarHeight = 8 * scale_factor;
     float controlsRowHeight = 32 * scale_factor;
     float controlSpacing = 10 * scale_factor;
     float iconSize = ICON_SIZE * scale_factor;
-    
+
     // Calculate exact space needed for controls
     float topPadding = 16 * scale_factor;
     float seekBarToControlsGap = 10 * scale_factor;
@@ -273,43 +271,52 @@ void player_update(void)
 
     // Calculate total height needed
     float totalControlsHeight = topPadding + seekBarHeight + seekBarToControlsGap + controlsRowHeight + bottomPadding;
-    
+
     // Position controls at absolute bottom
     float controlsStartY = screenHeight - totalControlsHeight;
     float seekBarY = controlsStartY + topPadding;
+    float subtitle_bottom = totalControlsHeight + 10 * scale_factor;
+
     Rectangle seekBar = {margin, seekBarY, seekBarWidth, seekBarHeight};
     Rectangle seekBarCurrentPos = {seekBar.x, seekBar.y, seekBar.width * (float)(frame_time / total_runtime), seekBar.height};
-    
+
     // Controls row positioned below seekbar
     float controlsY = seekBar.y + seekBar.height + seekBarToControlsGap;
     float currentX = margin;
-    
+
     // Play/Pause button
     Rectangle playPauseButton = {currentX, controlsY, iconSize, iconSize};
     currentX += iconSize + controlSpacing;
-    
-    // Next button  
+
+    // Next button
     Rectangle nextButton = {currentX, controlsY, iconSize, iconSize};
     currentX += iconSize + controlSpacing;
-    
+
     // Volume button
     Rectangle volumeButton = {currentX, controlsY, iconSize, iconSize};
     currentX += iconSize + controlSpacing;
-    
+
     // Time display
     Vector2 timePos = {currentX, controlsY + (iconSize - time_fontsize) / 2};
     currentX += timeTextSize.x + controlSpacing;
-    
+
     // Video title (right-aligned or remaining space)
     float remainingWidth = setting.width - currentX - margin;
     Vector2 titlePos = {currentX, controlsY + (iconSize - title_fontsize) / 2};
 
     // Vector2 pill = {seekBar.x + seekBar.width * (float)(frame_time / total_runtime), seekBar.y};
 
-    if (CheckCollisionPointRec(GetMousePosition(), seekBar))
+    if (
+        CheckCollisionPointRec(GetMousePosition(), seekBar) ||
+        CheckCollisionPointRec(GetMousePosition(), seekBarCurrentPos) ||
+        CheckCollisionPointRec(GetMousePosition(), playPauseButton) ||
+        CheckCollisionPointRec(GetMousePosition(), nextButton) ||
+        CheckCollisionPointRec(GetMousePosition(), volumeButton))
     {
         SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
-    } else {
+    }
+    else
+    {
         SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     }
 
@@ -411,7 +418,7 @@ void player_update(void)
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
         Vector2 mousePos = GetMousePosition();
-        
+
         if (CheckCollisionPointRec(mousePos, seekBar) ||
             CheckCollisionPointRec(mousePos, seekBarCurrentPos))
         {
@@ -507,36 +514,38 @@ void player_update(void)
     }
 
     // Show controls when hovering over calculated control area OR when window is very small
-    bool shouldShowControls = (GetMousePosition().y > controlsStartY) || 
-                             (screenWidth < 600 || screenHeight < 400);
-    
+    bool shouldShowControls = (GetMousePosition().y > controlsStartY) ||
+                              (screenWidth < 600 || screenHeight < 400);
+
     if (shouldShowControls)
         last_hover_time = GetTime();
     if (GetTime() - last_hover_time < 3.0f || shouldShowControls)
     {
         double alpha = shouldShowControls ? 1.0 : (1.0 - (GetTime() - last_hover_time) / 3.0);
-        if (alpha < 0) alpha = 0;
-        if (alpha > 1) alpha = 1;
-        
+        if (alpha < 0)
+            alpha = 0;
+        if (alpha > 1)
+            alpha = 1;
+
         // Draw glass-like background for exact controls area needed
         Rectangle controlsBackground = {
-            0, 
+            0,
             controlsStartY,
             (float)screenWidth,
-            totalControlsHeight
-        };
+            totalControlsHeight};
+        subtitle_bottom += totalControlsHeight;
         DrawRectangleRounded(controlsBackground, 0.1f, 10, GetColor(0x181920C0));
         // Draw seekbar
         DrawRectangleRounded(seekBar, 0.5f, 10, Fade(GetColor(0x444444FF), alpha));
         DrawRectangleRounded(seekBarCurrentPos, 0.5f, 10, Fade(ACCENT_COLOR, alpha));
-        
+
         // Draw play/pause button
         DrawTexturePro(ps.is_playing ? pauseTexture : playTexture,
                        (Rectangle){0, 0, playTexture.width, playTexture.height},
                        playPauseButton,
                        (Vector2){0, 0}, 0.0f,
                        Fade(ACCENT_COLOR, alpha));
-        
+
         // Draw next button
         DrawTexturePro(ffTexture,
                        (Rectangle){0, 0, ffTexture.width, ffTexture.height},
@@ -549,16 +558,18 @@ void player_update(void)
                        volumeButton,
                        (Vector2){0, 0}, 0.0f,
                        Fade(RAYWHITE, alpha));
-        
+
         // Draw time display
         DrawTextEx(time_font, time_text, timePos, time_fontsize, 0, Fade(RAYWHITE, alpha));
-        
+
         // Draw video title (truncate if too long)
         const char *displayTitle = ps.file_title;
         char truncatedTitle[256];
-        if (videoTitleSize.x > remainingWidth && remainingWidth > 50) {
+        if (videoTitleSize.x > remainingWidth && remainingWidth > 50)
+        {
             int maxChars = (remainingWidth - 20) / (title_fontsize * 0.6f); // rough estimate
-            if (maxChars > 0 && maxChars < 253) {
+            if (maxChars > 0 && maxChars < 253)
+            {
                 strncpy(truncatedTitle, ps.file_title, maxChars);
                 truncatedTitle[maxChars] = '.';
                 truncatedTitle[maxChars + 1] = '.';
@@ -586,12 +597,12 @@ void player_update(void)
             (GetScreenHeight() / 2.0f) - vol_height / 2.0f,
             vol_width,
             vol_height,
-            ORANGE);
-        DrawRectangleRec(vol_inner_rect, Fade(ORANGE, 0.8f));
+            ACCENT_COLOR);
+        DrawRectangleRec(vol_inner_rect, Fade(ACCENT_COLOR, 0.8f));
         Font volume_font = get_best_font(app.fonts, FONT_SIZE);
         Vector2 textSize = MeasureTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, RAYWHITE);
+        DrawTextEx(volume_font, TextFormat("Volume: %d%%", (int)ps.volume), textPos, FONT_SIZE, 0, ACCENT_COLOR);
     }
 
     if (GetTime() - last_audio_change_time < 3.0f)
@@ -599,7 +610,7 @@ void player_update(void)
         Font audio_font = get_best_font(app.fonts, FONT_SIZE);
         Vector2 textSize = MeasureTextEx(audio_font, TextFormat("Audio: %s", audio_language), FONT_SIZE, 0);
         Vector2 textPos = {GetScreenWidth() - textSize.x - 10, 10 + textSize.y};
-        DrawTextEx(audio_font, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, RAYWHITE);
+        DrawTextEx(audio_font, TextFormat("Audio: %s", audio_language), textPos, FONT_SIZE, 0, ACCENT_COLOR);
     }
     if (GetTime() - last_subtitle_change_time < 3.0f)
     {
@@ -613,11 +624,12 @@ void player_update(void)
     const char *current_subtitle = get_current_subtitle((double)frame_time);
     if (current_subtitle && current_subtitle[0] != '\0')
     {
-        Font current_subtitle_font = get_best_font(app.fonts, FONT_SIZE * 1.25);
-        Vector2 a = MeasureTextEx(current_subtitle_font, current_subtitle, FONT_SIZE * 1.25, 0);
+        int subtitle_fontsize = 48;
+        Font current_subtitle_font = get_best_font(app.fonts, subtitle_fontsize);
+        Vector2 a = MeasureTextEx(current_subtitle_font, current_subtitle, subtitle_fontsize, 0);
         DrawTextEx(current_subtitle_font, current_subtitle,
-                   (Vector2){screenWidth / 2 - a.x / 2, screenHeight - settingHeight + settingHeight * 0.15f},
-                   FONT_SIZE * 1.25, 0, WHITE);
+                   (Vector2){screenWidth / 2 - a.x / 2, screenHeight - subtitle_bottom},
+                   subtitle_fontsize, 0, WHITE);
     }
 
     // Draw help menu if visible

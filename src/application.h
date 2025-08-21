@@ -11,7 +11,8 @@
 
 #define BACKGROUND_COLOR GetColor(0x181920FF)
 #define SECONDARY_BGCOLOR GetColor(0x343434FF)
-#define ACCENT_COLOR GetColor(0x133E31FF)
+// #define ACCENT_COLOR GetColor(0x133E31FF)
+#define ACCENT_COLOR RAYWHITE
 
 typedef struct {
     Custom_Fonts fonts;

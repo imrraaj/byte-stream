@@ -17,7 +17,7 @@ typedef struct {
 
 Resource resources[] = {
     { .file_path = "./assets/icons/bb.png" },
-    { .file_path = "./assets/icons/ff.png" },
+    { .file_path = "./assets/icons/next.png" },
     { .file_path = "./assets/icons/pause.png" },
     { .file_path = "./assets/icons/play.png" },
     { .file_path = "./assets/icons/stop.png" },

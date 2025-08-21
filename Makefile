@@ -14,7 +14,6 @@ endif
 
 bytestream: generator
 	./generator
-	mkdir -p build
 	$(CC) -o build/bytestream src/*.c $(CFLAGS) $(INCLUDES) $(LDFLAGS)
 
 release: generator assets/macos/bytestream.icns
