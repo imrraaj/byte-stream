@@ -37,20 +37,6 @@ static Font ui_font, subtitle_display_font;
 static float ui_font_size, subtitle_font_size;
 static bool fonts_initialized = false;
 
-static inline void init_fonts_if_needed(int screen_width, int screen_height)
-{
-    if (!fonts_initialized) {
-        float scale_factor = fminf(screen_width / 1200.0f, screen_height / 800.0f);
-        scale_factor = fmaxf(scale_factor, 0.5f);
-        scale_factor = fminf(scale_factor, 1.5f);
-        
-        ui_font_size = 24 * scale_factor;
-        subtitle_font_size = 48;
-        ui_font = get_best_font(app.fonts, ui_font_size, UI_FONT);
-        subtitle_display_font = get_best_font(app.fonts, subtitle_font_size, SUBTITLE_FONT);
-        fonts_initialized = true;
-    }
-}
 
 static void perform_seek(double seek_time)
 {
@@ -146,7 +132,7 @@ int player_init(char *filename)
     ps.raylib_audio_stream = LoadAudioStream(sample_rate, sample_size, channels);
     SetAudioStreamCallback(ps.raylib_audio_stream, audio_callback);
     PlayAudioStream(ps.raylib_audio_stream);
-    ps.volume = 500;
+    ps.volume = 100.0f;
     ps.is_muted = false;
     SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
 
@@ -154,6 +140,11 @@ int player_init(char *filename)
     ps.texture = LoadTextureFromImage(GenImageColor(ds.video_codec_ctx->width, ds.video_codec_ctx->height, BLACK));
     pthread_mutex_unlock(&ds.texture_mutex);
 
+
+    ui_font_size = 38;
+    subtitle_font_size = 48;
+    ui_font = get_best_font(app.fonts, ui_font_size, UI_FONT);
+    subtitle_display_font = get_best_font(app.fonts, subtitle_font_size, SUBTITLE_FONT);
     shaderArray.capacity = 4;
     shaderArray.shaders = malloc(shaderArray.capacity * sizeof(Shader));
     shaderArray.count = 0;
@@ -216,18 +207,13 @@ void player_update(void)
     int screenHeight = GetDisplayHeight();
     double current_time = GetTime();
     double total_runtime = (double)ds.format_ctx->duration / AV_TIME_BASE;
-    
-    init_fonts_if_needed(screenWidth, screenHeight);
-
     float dest_width = (float)ds.video_codec_ctx->width;
     float dest_height = (float)ds.video_codec_ctx->height;
-
     float video_aspect_ratio = dest_width / dest_height;
     float display_aspect_ratio = (float)screenWidth / (float)screenHeight;
 
     Rectangle dest_rect;
 
-    // Video takes full screen, respecting aspect ratio
     if (display_aspect_ratio > video_aspect_ratio)
     {
         // Screen is wider than video - fit video height to screen, center horizontally
@@ -255,7 +241,9 @@ void player_update(void)
         last_hover_time = current_time;
     }
 
-    float scale_factor = ui_font_size / 24.0f;
+    float scale_factor = fminf(screenWidth / 1200.0f, screenHeight / 800.0f);
+    scale_factor = fmaxf(scale_factor, 0.5f);
+    scale_factor = fminf(scale_factor, 1.5f);
     float settingHeight = fmaxf(screenHeight * 0.15f, 100.0f);
     
     // Controls area at bottom of screen as overlay

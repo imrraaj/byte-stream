@@ -30,13 +30,13 @@ else ifeq ($(OS),Windows_NT)
 	$(CC) -o build/bytestream.exe src/*.c -O2 -DNDEBUG -mwindows -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/windows -l:libraylib.a $(INCLUDES) $(LDFLAGS)
 else
 	$(CC) -o build/bytestream src/*.c -O2 -DNDEBUG -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a $(INCLUDES) $(LDFLAGS)
-endif 
+endif
 
 # Minimal icon sizes (only what's actually needed)
 ICON_SIZES = 16 32 128 256 512
 
 # Regenerate macOS icon only when logo changes
-assets/macos/bytestream.icns: assets/logos/bytestream-256.png
+assets/macos/bytestream.icns: assets/logos/bytestream-bg.png
 	@echo "Regenerating macOS icon..."
 	mkdir -p build/icon.iconset
 	$(foreach size,$(ICON_SIZES),sips -z $(size) $(size) $< --out build/icon.iconset/icon_$(size)x$(size).png;)
@@ -45,7 +45,7 @@ assets/macos/bytestream.icns: assets/logos/bytestream-256.png
 	rm -rf build/icon.iconset
 	@echo "Icon updated!"
 
-generator: 
+generator:
 	cc generator.c -o ./generator
 
 test:

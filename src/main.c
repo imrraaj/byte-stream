@@ -56,7 +56,7 @@ int main(int argc, char **argv)
             int logoX = (screenWidth - logo_texture.width) / 2;
             int logoY = (screenHeight - logo_texture.height) / 2 - 80;
 
-            char *select_text = "Byte Stream - v" BYTESTREAM_VERSION;
+            char *select_text = "Bytestream - v" BYTESTREAM_VERSION;
             float title_size = 48.0f;
             Font title_font = get_best_font(app.fonts, title_size, UI_FONT);
             Vector2 textSize1 = MeasureTextEx(title_font, select_text, title_size, 1.0f);
@@ -92,7 +92,7 @@ int main(int argc, char **argv)
             }
             if (CheckCollisionPointRec(GetMousePosition(), buttonRect))
             {
-                buttonColor = ACCENT_COLOR;
+                buttonColor = Fade(SECONDARY_BGCOLOR, 0.8f);
                 SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
                 if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
                 {
