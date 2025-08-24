@@ -25,7 +25,7 @@ Resource resources[] = {
     { .file_path = "./assets/icons/mute.png" },
     { .file_path = "./assets/fonts/SourceSans3-Bold.ttf" },
     { .file_path = "./assets/fonts/GoogleSansText-Bold.ttf" },
-    {.file_path = "./assets/logos/bytestream-256.png" },
+    {.file_path = "./assets/logos/bytestream-bg.png" },
 };
 
 bool generate_resource_bundle(void)

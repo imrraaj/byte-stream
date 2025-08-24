@@ -44,11 +44,12 @@ int64_t frame_time = 0;
 static struct { int indices[100]; int count; int index; } audio_streams = {0};
 static struct { int indices[100]; int count; int index; } subtitle_streams = {0};
 
-static double playback_start_time = 0.0;
-static double first_frame_pts = 0.0;
-static double pause_time = 0.0;
-static double audio_clock = 0.0;
-static bool sync_initialized = false;
+double playback_start_time = 0.0;
+double first_frame_pts = 0.0;
+double pause_time = 0.0;
+double audio_clock = 0.0;
+bool sync_initialized = false;
+bool just_seeked = false;
 
 static inline void check_pause(void)
 {
@@ -170,7 +171,17 @@ void *decode_thread_func(void *arg)
     while (ds.decoding)
     {
         check_pause();
-        decoder_decode_frame();
+        
+        int decode_result = decoder_decode_frame();
+        
+        // If we hit EOF, wait a bit before trying again
+        if (decode_result == -2) {
+            WaitTime(0.1);
+        }
+        // If there was an error, wait a tiny bit
+        else if (decode_result != 0) {
+            WaitTime(0.001);
+        }
     }
     return NULL;
 }
@@ -192,7 +203,8 @@ void *video_thread_func(void *arg)
 
         if (!pkt)
         {
-            WaitTime(0.1);
+            // Reduce wait time after seeks to make video resume faster
+            WaitTime(0.01);
             continue;
         }
 
@@ -205,9 +217,11 @@ void *video_thread_func(void *arg)
 
                 if (!sync_initialized)
                 {
+                    pthread_mutex_lock(&ds.queue_mutex);
                     playback_start_time = GetTime();
                     first_frame_pts = pts_seconds;
                     sync_initialized = true;
+                    pthread_mutex_unlock(&ds.queue_mutex);
                 }
 
                 double current_time = GetTime() - playback_start_time;
@@ -240,6 +254,16 @@ void *video_thread_func(void *arg)
                     target_delay *= 0.8;
                 }
 
+                // If we just seeked, display frames immediately without delay
+                if (just_seeked) {
+                    just_seeked = false;
+                    target_delay = 0; // No delay after seek
+                }
+                // Skip delays if video is very far behind
+                else if (target_delay < -1.0) {
+                    target_delay = 0;
+                }
+
                 // Apply the delay with reasonable bounds
                 if (target_delay > 0 && target_delay < 0.2)
                 {
@@ -247,8 +271,8 @@ void *video_thread_func(void *arg)
                 }
                 else if (target_delay <= 0)
                 {
-                    // Use minimal frame delay when behind
-                    WaitTime(frame_delay * 0.2);
+                    // Use minimal frame delay when behind or catching up
+                    WaitTime(frame_delay * 0.05);
                 }
                 else
                 {
@@ -508,11 +532,17 @@ int decoder_change_audio(char *language)
         return -1;
     }
 
-    // Resynchronize streams
+    // Resynchronize streams with better error handling
     int64_t seek_target = (int64_t)(frame_time / av_q2d(ds.video_stream->time_base));
-    if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0 ||
-        avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_target, INT64_MAX, 0) < 0) {
-        fprintf(stderr, "ERROR: Seek failed during audio change!\n");
+    int video_seek_result = avformat_seek_file(ds.format_ctx, ds.video_stream_idx, 
+                                             INT64_MIN, seek_target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+    int audio_seek_target_ts = av_rescale_q(seek_target, ds.video_stream->time_base, ds.audio_stream->time_base);
+    int audio_seek_result = avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, 
+                                             INT64_MIN, audio_seek_target_ts, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+    
+    if (video_seek_result < 0 || audio_seek_result < 0) {
+        fprintf(stderr, "ERROR: Seek failed during audio change! Video: %d, Audio: %d\n", 
+                video_seek_result, audio_seek_result);
     }
 
     avcodec_flush_buffers(ds.video_codec_ctx);

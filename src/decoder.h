@@ -60,10 +60,14 @@ struct DecoderState {
 typedef struct DecoderState DecoderState;
 extern DecoderState ds;
 extern int64_t frame_time;
-static bool sync_initialized;
-static double playback_start_time;
-static double first_frame_pts;
-static double audio_clock;
+
+// Synchronization state variables
+extern bool sync_initialized;
+extern double playback_start_time;
+extern double first_frame_pts;
+extern double pause_time;
+extern double audio_clock;
+extern bool just_seeked;
 
 int decoder_init(char *filename);
 int decoder_decode_frame(void);

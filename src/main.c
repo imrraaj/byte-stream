@@ -7,24 +7,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <signal.h>
 
 #define BYTESTREAM_VERSION "0.1.0"
 
 Application app = {0};
 bool isFileSelected = false;
 char errorMsg[256] = {0};
+volatile sig_atomic_t should_exit = 0;
+
+void signal_handler(int sig)
+{
+    if (sig == SIGINT)
+    {
+        should_exit = 1;
+    }
+}
 
 int main(int argc, char **argv)
 {
+    signal(SIGINT, signal_handler);
+
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     InitWindow(800, 600, TextFormat("Bytestream - v%s", BYTESTREAM_VERSION));
     SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
     SetWindowPosition(0, 0);
-    SetExitKey(0);
+    // SetExitKey(KEY_LEFT_CONTROL & KEY_Q);
     SetTargetFPS(60);
     SetTextLineSpacing(0);
 
-    Texture2D logo_texture = bundle_load_texture("./assets/logos/bytestream-256.png");
+    Texture2D logo_texture = bundle_load_texture("./assets/logos/bytestream-bg.png");
     Image logo = LoadImageFromTexture(logo_texture);
     SetWindowIcon(logo);
 
@@ -42,7 +54,7 @@ int main(int argc, char **argv)
         }
     }
 
-    while (!WindowShouldClose())
+    while (!WindowShouldClose() && !should_exit)
     {
         if (isFileSelected)
         {

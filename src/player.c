@@ -26,39 +26,61 @@ double last_hover_time = -5.0f;
 double last_volume_change_time = -5.0f;
 double last_audio_change_time = -5.0f;
 double last_subtitle_change_time = -5.0f;
+double last_ss_save_change_time = -5.0f;
 char audio_language[512], subtitle_language[512];
 static float lastClickTime = 0.0f;
 static const float doubleClickThreshold = 0.3f;
 static bool show_help_menu = false;
+static bool volumeSliderDragging = false;
+static bool seekBarDragging = false;
 ShaderArray shaderArray = {0};
 
 // UI caching
 static Font ui_font, subtitle_display_font;
 static float ui_font_size, subtitle_font_size;
-static bool fonts_initialized = false;
 
 
 static void perform_seek(double seek_time)
 {
     double total_runtime = (double)ds.format_ctx->duration / AV_TIME_BASE;
     if (seek_time < 0) seek_time = 0;
-    if (seek_time > total_runtime) seek_time = total_runtime;
+    if (seek_time >= total_runtime) seek_time = total_runtime - 0.1;
 
-    int flags = (seek_time < frame_time) ? AVSEEK_FLAG_BACKWARD : 0;
-    int64_t seek_target = (int64_t)(seek_time / av_q2d(ds.video_stream->time_base));
+    // Don't pause/resume - just lock the queue mutex briefly
+    pthread_mutex_lock(&ds.queue_mutex);
     
-    if (avformat_seek_file(ds.format_ctx, ds.video_stream_idx, INT64_MIN, seek_target, INT64_MAX, flags) < 0 ||
-        avformat_seek_file(ds.format_ctx, ds.audio_stream_idx, INT64_MIN, seek_target, INT64_MAX, flags) < 0) {
-        fprintf(stderr, "ERROR: Seek failed!\n");
+    // Convert to timestamp in AV_TIME_BASE (microseconds)
+    int64_t seek_target = (int64_t)(seek_time * AV_TIME_BASE);
+    
+    // Use simple av_seek_frame on the whole file (stream_index = -1)
+    // This maintains decoder consistency better than per-stream seeks
+    int result = av_seek_frame(ds.format_ctx, -1, seek_target, AVSEEK_FLAG_BACKWARD);
+    
+    if (result < 0) {
+        printf("Seek failed: %d\n", result);
+        pthread_mutex_unlock(&ds.queue_mutex);
         return;
     }
-    
-    avcodec_flush_buffers(ds.video_codec_ctx);
-    avcodec_flush_buffers(ds.audio_codec_ctx);
+
+    // Clear queues first, then flush
     queue_clear(ds.video_queue);
     av_audio_fifo_reset(ds.fifo);
+    clear_subtitle_queue();
+    
+    pthread_mutex_unlock(&ds.queue_mutex);
+    
+    // Flush codec buffers AFTER clearing queues
+    avcodec_flush_buffers(ds.video_codec_ctx);
+    avcodec_flush_buffers(ds.audio_codec_ctx);
+    if (ds.subtitle_codec_ctx) {
+        avcodec_flush_buffers(ds.subtitle_codec_ctx);
+    }
+    
+    // Reset timing
     reset_sync_state();
     frame_time = seek_time;
+    just_seeked = true;
+    
     last_hover_time = GetTime();
 }
 
@@ -232,6 +254,9 @@ void player_update(void)
     }
 
     // Handle input events
+    if (IsKeyPressed(KEY_ESCAPE) || (IsKeyPressed(KEY_Q) && (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)))) {
+        CloseWindow();
+    }
     if (IsKeyPressed(KEY_SPACE)) {
         TogglePause();
         last_hover_time = current_time;
@@ -299,6 +324,16 @@ void player_update(void)
     Rectangle volumeButton = {currentX, controlsY, iconSize, iconSize};
     currentX += iconSize + controlSpacing;
 
+
+    // Volume slider
+    float volumeSliderWidth = 100 * scale_factor;
+    Rectangle volumeSlider = {currentX, controlsY + (iconSize - 16 * scale_factor) / 2, volumeSliderWidth, 16 * scale_factor};
+    currentX += volumeSlider.width + controlSpacing;
+
+
+
+
+
     // Time display
     Vector2 timePos = {currentX, controlsY + (iconSize - ui_font_size) / 2};
     currentX += timeTextSize.x + controlSpacing;
@@ -314,7 +349,8 @@ void player_update(void)
         CheckCollisionPointRec(GetMousePosition(), seekBarCurrentPos) ||
         CheckCollisionPointRec(GetMousePosition(), playPauseButton) ||
         CheckCollisionPointRec(GetMousePosition(), nextButton) ||
-        CheckCollisionPointRec(GetMousePosition(), volumeButton))
+        CheckCollisionPointRec(GetMousePosition(), volumeButton) ||
+        CheckCollisionPointRec(GetMousePosition(), volumeSlider))
     {
         SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
     }
@@ -342,6 +378,7 @@ void player_update(void)
     }
     if (IsKeyPressed(KEY_P) && !ps.is_playing && ExportImage(LoadImageFromTexture(ps.texture), "frame.png")) {
         TraceLog(LOG_INFO, "Saved frame in an image");
+        last_ss_save_change_time = current_time;
     }
     if (IsKeyPressed(KEY_B)) {
         decoder_change_audio(audio_language);
@@ -365,7 +402,11 @@ void player_update(void)
         Vector2 mousePos = GetMousePosition();
 
         if (CheckCollisionPointRec(mousePos, seekBar) || CheckCollisionPointRec(mousePos, seekBarCurrentPos)) {
-            float seekTime = ((mousePos.x - seekBar.x) / seekBar.width) * total_runtime;
+            seekBarDragging = true;
+            // More precise seekbar calculation with bounds checking
+            float relativePos = (mousePos.x - seekBar.x) / seekBar.width;
+            relativePos = fmaxf(0.0f, fminf(1.0f, relativePos)); // Clamp to [0,1]
+            float seekTime = relativePos * total_runtime;
             perform_seek(seekTime);
         }
         else if (CheckCollisionPointRec(mousePos, playPauseButton)) {
@@ -378,11 +419,53 @@ void player_update(void)
             last_volume_change_time = current_time;
             last_hover_time = current_time;
         }
+        else if (CheckCollisionPointRec(mousePos, volumeSlider)) {
+            volumeSliderDragging = true;
+            float relativePos = (mousePos.x - volumeSlider.x) / volumeSlider.width;
+            relativePos = fmaxf(0.0f, fminf(1.0f, relativePos));
+            ps.volume = relativePos * MAX_VOLUME_ALLOWED;
+            if (!ps.is_muted) {
+                SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+            }
+            last_volume_change_time = current_time;
+            last_hover_time = current_time;
+        }
         else {
             TogglePause();
             last_hover_time = current_time;
         }
     }
+
+    // Handle volume slider dragging
+    if (volumeSliderDragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        Vector2 mousePos = GetMousePosition();
+        float relativePos = (mousePos.x - volumeSlider.x) / volumeSlider.width;
+        relativePos = fmaxf(0.0f, fminf(1.0f, relativePos));
+        ps.volume = relativePos * MAX_VOLUME_ALLOWED;
+        if (!ps.is_muted) {
+            SetAudioStreamVolume(ps.raylib_audio_stream, ps.volume / 100);
+        }
+        last_volume_change_time = current_time;
+        last_hover_time = current_time;
+    }
+
+    // Handle seekbar dragging
+    if (seekBarDragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        Vector2 mousePos = GetMousePosition();
+        float relativePos = (mousePos.x - seekBar.x) / seekBar.width;
+        relativePos = fmaxf(0.0f, fminf(1.0f, relativePos));
+        float seekTime = relativePos * total_runtime;
+        // perform_seek(seekTime);
+    }
+    
+    // Stop dragging when mouse button is released
+    if (volumeSliderDragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        volumeSliderDragging = false;
+    }
+    if (seekBarDragging && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        seekBarDragging = false;
+    }
+
     if (IsFileDropped())
     {
         FilePathList droppedFiles = LoadDroppedFiles();
@@ -476,6 +559,16 @@ void player_update(void)
                        (Vector2){0, 0}, 0.0f,
                        Fade(RAYWHITE, alpha));
 
+        // Draw volume slider
+        DrawRectangleRounded(volumeSlider, 0.5f, 10, Fade(GetColor(0x444444FF), alpha));
+        Rectangle volumeSliderFilled = {
+            volumeSlider.x, 
+            volumeSlider.y, 
+            volumeSlider.width * (ps.volume / MAX_VOLUME_ALLOWED), 
+            volumeSlider.height
+        };
+        DrawRectangleRounded(volumeSliderFilled, 0.5f, 10, Fade(ACCENT_COLOR, alpha));
+
         // Draw time display
         DrawTextEx(ui_font, time_text, timePos, ui_font_size, 0, Fade(RAYWHITE, alpha));
 
@@ -526,6 +619,13 @@ void player_update(void)
         Vector2 textSize = MeasureTextEx(ui_font, subtitle_text, FONT_SIZE, 0);
         Vector2 textPos = {screenWidth - textSize.x - 10, 10 + textSize.y};
         DrawTextEx(ui_font, subtitle_text, textPos, FONT_SIZE, 0, RAYWHITE);
+    }
+    if(current_time - last_ss_save_change_time < 3.0f)
+    {
+        const char *ss_text = "Screenshot saved as frame.png";
+        Vector2 textSize = MeasureTextEx(ui_font, ss_text, FONT_SIZE, 0);
+        Vector2 textPos = {screenWidth - textSize.x - 10, 10 + textSize.y};
+        DrawTextEx(ui_font, ss_text, textPos, FONT_SIZE, 0, RAYWHITE);
     }
 
     // Display subtitle if one should be visible at current time
