@@ -23,38 +23,38 @@ typedef struct SubtitleItem {
 } SubtitleItem;
 
 struct DecoderState {
-  AVFormatContext *format_ctx;
-  AVCodecContext *video_codec_ctx;
-  AVCodecContext *audio_codec_ctx;
-  AVCodecContext *subtitle_codec_ctx;
-  int audio_stream_idx;
-  int video_stream_idx;
-  int subtitle_stream_idx;
-  int selected_subtitle_stream_idx;
-  AVStream *video_stream;
-  AVStream *audio_stream;
-  AVStream *subtitle_stream;
-  AVPacket *packet;
-  SwrContext *swr_ctx;
-  struct SwsContext *sws_ctx;
-  AVAudioFifo *fifo;
-  AVDictionaryEntry *tag;
+    AVFormatContext *format_ctx;
+    AVCodecContext *video_codec_ctx;
+    AVCodecContext *audio_codec_ctx;
+    AVCodecContext *subtitle_codec_ctx;
+    int audio_stream_idx;
+    int video_stream_idx;
+    int subtitle_stream_idx;
+    int selected_subtitle_stream_idx;
+    AVStream *video_stream;
+    AVStream *audio_stream;
+    AVStream *subtitle_stream;
+    AVPacket *packet;
+    SwrContext *swr_ctx;
+    struct SwsContext *sws_ctx;
+    AVAudioFifo *fifo;
+    AVDictionaryEntry *tag;
 
-  uint8_t *rgba_frame_buffer;
-  char *current_subtitle;
-  double subtitle_start_time;
-  double subtitle_end_time;
-  SubtitleItem *subtitle_queue;
-  pthread_mutex_t subtitle_mutex;
+    uint8_t *rgba_frame_buffer;
+    char *current_subtitle;
+    double subtitle_start_time;
+    double subtitle_end_time;
+    SubtitleItem *subtitle_queue;
+    pthread_mutex_t subtitle_mutex;
 
-  struct Queue *audio_queue;
-  struct Queue *video_queue;
-  pthread_mutex_t queue_mutex;
-  pthread_mutex_t texture_mutex;
-  pthread_t decode_thread;
-  pthread_t video_thread;
-  bool decoding;
-  pthread_mutex_t pause_mutex;
+    struct Queue *audio_queue;
+    struct Queue *video_queue;
+    pthread_mutex_t queue_mutex;
+    pthread_mutex_t texture_mutex;
+    pthread_t decode_thread;
+    pthread_t video_thread;
+    bool decoding;
+    pthread_mutex_t pause_mutex;
 };
 
 typedef struct DecoderState DecoderState;

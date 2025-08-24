@@ -1,8 +1,8 @@
 #ifndef FONT_H
 #define FONT_H
+#include "macros.h"
 #include "raylib.h"
 #include "resource.h"
-#include "macros.h"
 #include <stdlib.h>
 
 typedef struct

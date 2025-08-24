@@ -3,21 +3,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <libavutil/opt.h>
 #include <libavcodec/avcodec.h>
-#include <libswscale/swscale.h>
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
+#include <libavutil/opt.h>
 #include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 
-typedef struct PacketQueue
-{
+typedef struct PacketQueue {
     AVPacket *packet;
     struct PacketQueue *next;
 } PacketQueue;
 
-typedef struct Queue
-{
+typedef struct Queue {
     PacketQueue *head;
     PacketQueue *tail;
 } Queue;

@@ -1,10 +1,8 @@
 #include "queue.h"
 
-Queue *queue_init(void)
-{
+Queue *queue_init(void) {
     Queue *ret = malloc(sizeof(Queue));
-    if (!ret)
-    {
+    if (!ret) {
         fprintf(stderr, "ERROR: Could not allocate video queue\n");
         return NULL;
     }
@@ -12,8 +10,7 @@ Queue *queue_init(void)
     ret->tail = NULL;
     return ret;
 }
-void queue_push(Queue *queue, AVPacket *packet)
-{
+void queue_push(Queue *queue, AVPacket *packet) {
     PacketQueue *item = malloc(sizeof(PacketQueue));
     item->packet = av_packet_alloc();
     av_packet_move_ref(item->packet, packet);
@@ -25,8 +22,7 @@ void queue_push(Queue *queue, AVPacket *packet)
     queue->tail = item;
 }
 
-AVPacket *queue_pop(Queue *queue)
-{
+AVPacket *queue_pop(Queue *queue) {
     if (!queue->head)
         return NULL;
     PacketQueue *item = queue->head;
@@ -37,11 +33,9 @@ AVPacket *queue_pop(Queue *queue)
     free(item);
     return packet;
 }
-void queue_free(Queue *queue)
-{
+void queue_free(Queue *queue) {
     PacketQueue *current = queue->head;
-    while (current)
-    {
+    while (current) {
         PacketQueue *next = current->next;
         av_packet_free(&current->packet);
         free(current);
@@ -51,14 +45,12 @@ void queue_free(Queue *queue)
     queue->tail = NULL;
 }
 
-void queue_clear(Queue *queue)
-{
+void queue_clear(Queue *queue) {
     if (!queue)
         return;
 
     PacketQueue *current = queue->head;
-    while (current)
-    {
+    while (current) {
         PacketQueue *next = current->next;
         av_packet_free(&current->packet);
         free(current);

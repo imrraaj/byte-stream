@@ -1,12 +1,13 @@
 CC = clang
 
 UNAME_S := $(shell uname -s)
-INCLUDES = -I./include/ $(shell pkg-config --cflags libavformat libavcodec libavutil libswresample libswscale)
+INCLUDES = -I./include/ $(addprefix -I./external/,$(notdir $(wildcard external/*))) $(shell pkg-config --cflags libavformat libavcodec libavutil libswresample libswscale)
 LDFLAGS  = $(shell pkg-config --libs libavformat libavcodec libavutil libswresample libswscale) -lm
 
-# Source files (exclude tinyfiledialogs for separate compilation)
-SRCS = $(filter-out src/tinyfiledialogs.c, $(wildcard src/*.c))
-TINYFILE_OBJ = build/tinyfiledialogs.o
+# Source files
+SRCS = $(wildcard src/*.c)
+EXTERNAL_SRCS = $(wildcard external/*/*.c)
+EXTERNAL_OBJS = $(patsubst external/%.c,build/external_%.o,$(EXTERNAL_SRCS))
 
 # Platform-specific flags
 ifeq ($(UNAME_S),Darwin)
@@ -24,14 +25,15 @@ endif
 CFLAGS = $(COMPILE_FLAGS)
 ALL_LDFLAGS = $(PLATFORM_LDFLAGS) $(LDFLAGS)
 
-# Main target - compile main sources + link with tinyfiledialogs object
-build/bytestream: include/bundle.h $(SRCS) $(TINYFILE_OBJ) | build
-	$(CC) -o $@ $(SRCS) $(TINYFILE_OBJ) $(CFLAGS) $(INCLUDES) $(ALL_LDFLAGS)
+# Main target - compile main sources + link with external objects
+build/bytestream: include/bundle.h $(SRCS) $(EXTERNAL_OBJS) | build
+	$(CC) -o $@ $(SRCS) $(EXTERNAL_OBJS) $(CFLAGS) $(INCLUDES) $(ALL_LDFLAGS)
 
-# Compile tinyfiledialogs separately (only if object doesn't exist)
-$(TINYFILE_OBJ): src/tinyfiledialogs.c | build
-	@echo "Compiling tinyfiledialogs (one-time compilation)..."
-	$(CC) -c src/tinyfiledialogs.c -o $@ $(CFLAGS) $(INCLUDES)
+# Generic rule for compiling external dependencies
+build/external_%.o: external/%.c | build
+	@echo "Compiling external dependency: $<"
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(CFLAGS) $(INCLUDES)
 
 
 
@@ -56,14 +58,17 @@ else
 	$(MAKE) release-linux
 endif
 
-# Build tinyfiledialogs object for release (platform-specific flags)
-build/tinyfiledialogs-release.o: src/tinyfiledialogs.c | build
-	@echo "Building tinyfiledialogs for release..."
-	$(CC) -c src/tinyfiledialogs.c -o $@ -O2 -DNDEBUG $(COMPILE_FLAGS) $(INCLUDES)
+# Generic rule for compiling external dependencies for release
+build/external_%-release.o: external/%.c | build
+	@echo "Building external dependency for release: $<"
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -O2 -DNDEBUG $(COMPILE_FLAGS) $(INCLUDES)
+
+EXTERNAL_RELEASE_OBJS = $(patsubst external/%.c,build/external_%-release.o,$(EXTERNAL_SRCS))
 
 # macOS release with app bundle
-release-macos: include/bundle.h assets/macos/bytestream.icns build/tinyfiledialogs-release.o
-	$(CC) -o build/bytestream $(SRCS) build/tinyfiledialogs-release.o -O2 -DNDEBUG $(INCLUDES) -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -L./lib/macos -lraylib $(LDFLAGS)
+release-macos: include/bundle.h assets/macos/bytestream.icns $(EXTERNAL_RELEASE_OBJS)
+	$(CC) -o build/bytestream $(SRCS) $(EXTERNAL_RELEASE_OBJS) -O2 -DNDEBUG $(INCLUDES) -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL -L./lib/macos -lraylib $(LDFLAGS)
 	mkdir -p build/bytestream.app/Contents/MacOS
 	mkdir -p build/bytestream.app/Contents/Resources
 	mv build/bytestream build/bytestream.app/Contents/MacOS/
@@ -72,13 +77,13 @@ release-macos: include/bundle.h assets/macos/bytestream.icns build/tinyfiledialo
 	@echo "macOS app bundle created at build/bytestream.app"
 
 # Windows release
-release-windows: include/bundle.h build/tinyfiledialogs-release.o
-	$(CC) -o build/bytestream.exe $(SRCS) build/tinyfiledialogs-release.o -O2 -DNDEBUG $(INCLUDES) -mwindows -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/windows -l:libraylib.a $(LDFLAGS)
+release-windows: include/bundle.h $(EXTERNAL_RELEASE_OBJS)
+	$(CC) -o build/bytestream.exe $(SRCS) $(EXTERNAL_RELEASE_OBJS) -O2 -DNDEBUG $(INCLUDES) -mwindows -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/windows -l:libraylib.a $(LDFLAGS)
 	@echo "Windows executable created at build/bytestream.exe"
 
 # Linux release
-release-linux: include/bundle.h build/tinyfiledialogs-release.o
-	$(CC) -o build/bytestream $(SRCS) build/tinyfiledialogs-release.o -O2 -DNDEBUG $(INCLUDES) -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a $(LDFLAGS)
+release-linux: include/bundle.h $(EXTERNAL_RELEASE_OBJS)
+	$(CC) -o build/bytestream $(SRCS) $(EXTERNAL_RELEASE_OBJS) -O2 -DNDEBUG $(INCLUDES) -Wall -Wextra -pedantic -lGL -lm -lpthread -ldl -lrt -lX11 -L./lib/linux -l:libraylib.a $(LDFLAGS)
 	@echo "Linux executable created at build/bytestream"
 
 # Minimal icon sizes (only what's actually needed)
